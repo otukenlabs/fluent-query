@@ -1,0 +1,19 @@
+# Source files
+src/
+
+# Development files
+tsconfig.json
+*.spec.ts
+*.test.ts
+.vscode/
+.idea/
+
+# Build artifacts (except dist)
+*.tsbuildinfo
+
+# Git
+.git
+.gitignore
+
+# CI/CD
+.github/
