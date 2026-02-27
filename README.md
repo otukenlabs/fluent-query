@@ -13,6 +13,7 @@ A fluent, type-safe query builder for JSON data with MongoDB-style filters. Perf
 - 💯 **Decimal Precision** - Handle floating point comparisons correctly
 - 🔄 **Map/Reduce** - General-purpose transform and fold with map, reduce, flatMap, scan
 - ✂️ **Composable Primitives** - take, drop, takeWhile, dropWhile, partition, zip, zipWith
+- 🧩 **Assignable Lazy Chains** - Define a query once, run it on any dataset with `arrayPipeline()`
 
 ## Installation
 
@@ -316,6 +317,89 @@ const scored = query(data)
   .all();
 ```
 
+### Assignable Lazy Chains (arrayPipeline)
+
+Define a query chain once and reuse it on different data sources. The pipeline
+records operations lazily and replays them onto any array via `.run(items)`.
+
+```typescript
+import { arrayPipeline } from "fluent-query";
+
+interface Product {
+  name: string;
+  type: string;
+  price: number;
+}
+
+// Define the pipeline once -- no data bound yet
+const cheapPremiums = arrayPipeline<Product>()
+  .where("type")
+  .equals("Premium")
+  .sort("price", "asc")
+  .take(3);
+
+// Run on different datasets
+const fromWarehouse = cheapPremiums.run(warehouseProducts).all();
+const fromStore = cheapPremiums.run(storeProducts).all();
+const cheapestAnywhere = cheapPremiums.run(allProducts).first();
+```
+
+Pipelines are immutable -- each chained call returns a new pipeline, so you
+can safely branch from a shared base:
+
+```typescript
+const premiums = arrayPipeline<Product>().where("type").equals("Premium");
+
+const cheapest = premiums.sort("price", "asc").take(5);
+const priciest = premiums.sort("price", "desc").take(5);
+const count = premiums.run(products).count();
+```
+
+`.run()` returns a full `ArrayQuery`, so all terminal methods are available:
+
+```typescript
+const pipe = arrayPipeline<Product>()
+  .where("type")
+  .equals("Premium")
+  .sort("price", "desc");
+
+const aq = pipe.run(products);
+aq.all(); // all matching items
+aq.first(); // first match
+aq.count(); // count
+aq.sum("price"); // aggregate
+aq.pluck("name").all(); // extract values
+```
+
+Type-changing transforms produce a new pipeline with the output type:
+
+```typescript
+const labels = arrayPipeline<Product>()
+  .where("type")
+  .equals("Premium")
+  .map((p) => ({ label: p.name, cost: p.price }));
+
+labels.run(products).all();
+// => [{ label: 'Widget', cost: 500 }, ...]
+```
+
+`where()` chains support all modifiers and terminals:
+
+```typescript
+const caseExact = arrayPipeline<Product>()
+  .where("name")
+  .caseSensitive()
+  .contains("Pro");
+
+const negated = arrayPipeline<Product>().whereNot("type").equals("Basic");
+
+const priceRange = arrayPipeline<Product>()
+  .where("price")
+  .greaterThan(100)
+  .where("price")
+  .lessThanOrEqual(500);
+```
+
 ## API Reference
 
 ### Main Methods
@@ -396,6 +480,17 @@ const scored = query(data)
 
 - `.zip(other)` - Pair items with external array (truncates to shorter)
 - `.zipWith(other, fn)` - Combine items with external array using function
+
+### Pipeline Methods (`arrayPipeline`)
+
+- `arrayPipeline<T>()` - Create an empty reusable pipeline
+- `.where(path)` / `.whereNot(path)` - Start a where-chain (returns `PipelineWhereBuilder`)
+- `.filter(expr)`, `.whereSift(query)`, `.whereIn(path, values)`, `.whereAll(criteria)` - Filtering
+- `.sort(path, direction?)`, `.take(n)`, `.drop(n)`, `.takeWhile(fn)`, `.dropWhile(fn)` - Ordering and slicing
+- `.map(fn)`, `.map2(p1, p2, fn)`, `.mapn(paths, fn)`, `.flatMap(fn)`, `.scan(fn, init)` - Type-changing transforms
+- `.zip(other)`, `.zipWith(other, fn)` - Combining
+- All `*IfPresent` variants - Conditional filtering
+- `.run(items)` - Replay the pipeline onto an array, returns `ArrayQuery`
 
 ## Options
 
