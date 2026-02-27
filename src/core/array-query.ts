@@ -1742,6 +1742,262 @@ export class ArrayQuery<TItem> {
     return this.all().map((item) => [this.items.indexOf(item), item]);
   }
 
+  // ---------------------------------------------------------------------------
+  // Map family
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Applies `fn` to each item in the (filtered) array and returns a new
+   * `ArrayQuery` over the results.  The returned query starts with no
+   * clauses, so subsequent `.where()` calls filter the *mapped* output.
+   *
+   * @example
+   * ```ts
+   * const names = query(data)
+   *   .array('items')
+   *   .where('type').equals('Premium')
+   *   .map(item => item.name.toUpperCase())
+   *   .all();
+   * ```
+   */
+  map<TOut>(fn: (item: TItem) => TOut): ArrayQuery<TOut> {
+    return new ArrayQuery<TOut>(this.all().map(fn));
+  }
+
+  /**
+   * Extracts two path values from each item, applies `fn` to the pair,
+   * and returns a new `ArrayQuery` over the results.
+   */
+  map2<TOut>(
+    path1: string,
+    path2: string,
+    fn: (a: any, b: any) => TOut,
+  ): ArrayQuery<TOut> {
+    const mapped = this.all().map((item) =>
+      fn(getByPath(item as any, path1), getByPath(item as any, path2)),
+    );
+    return new ArrayQuery<TOut>(mapped);
+  }
+
+  /**
+   * Extracts N path values from each item, applies `fn` to the tuple,
+   * and returns a new `ArrayQuery` over the results.
+   */
+  mapn<TOut>(paths: string[], fn: (...values: any[]) => TOut): ArrayQuery<TOut> {
+    const mapped = this.all().map((item) => {
+      const values = paths.map((p) => getByPath(item as any, p));
+      return fn(...values);
+    });
+    return new ArrayQuery<TOut>(mapped);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Reduce / Fold family (terminal – returns scalar)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Left-fold (reduce) the filtered items into a single value.
+   *
+   * @example
+   * ```ts
+   * const total = query(data)
+   *   .array('items')
+   *   .reduce((acc, item) => acc + item.price, 0);
+   * ```
+   */
+  reduce<TAcc>(fn: (acc: TAcc, item: TItem) => TAcc, init: TAcc): TAcc {
+    return this.all().reduce(fn, init);
+  }
+
+  /**
+   * Fold with two path values extracted per item.
+   */
+  reduce2<TAcc>(
+    path1: string,
+    path2: string,
+    fn: (acc: TAcc, a: any, b: any) => TAcc,
+    init: TAcc,
+  ): TAcc {
+    return this.all().reduce(
+      (acc, item) =>
+        fn(acc, getByPath(item as any, path1), getByPath(item as any, path2)),
+      init,
+    );
+  }
+
+  /**
+   * Fold with N path values extracted per item.
+   */
+  reducen<TAcc>(
+    paths: string[],
+    fn: (acc: TAcc, ...values: any[]) => TAcc,
+    init: TAcc,
+  ): TAcc {
+    return this.all().reduce((acc, item) => {
+      const values = paths.map((p) => getByPath(item as any, p));
+      return fn(acc, ...values);
+    }, init);
+  }
+
+  /** Alias for {@link reduce}. */
+  fold<TAcc>(fn: (acc: TAcc, item: TItem) => TAcc, init: TAcc): TAcc {
+    return this.reduce(fn, init);
+  }
+
+  /** Alias for {@link reduce2}. */
+  fold2<TAcc>(
+    path1: string,
+    path2: string,
+    fn: (acc: TAcc, a: any, b: any) => TAcc,
+    init: TAcc,
+  ): TAcc {
+    return this.reduce2(path1, path2, fn, init);
+  }
+
+  /** Alias for {@link reducen}. */
+  foldn<TAcc>(
+    paths: string[],
+    fn: (acc: TAcc, ...values: any[]) => TAcc,
+    init: TAcc,
+  ): TAcc {
+    return this.reducen(paths, fn, init);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Core composable primitives
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Maps each item to zero or more results, then flattens into a single array.
+   *
+   * @example
+   * ```ts
+   * const allTags = query(data)
+   *   .array('items')
+   *   .flatMap(item => item.tags)
+   *   .all();
+   * ```
+   */
+  flatMap<TOut>(fn: (item: TItem) => TOut[]): ArrayQuery<TOut> {
+    const result: TOut[] = [];
+    for (const item of this.all()) {
+      result.push(...fn(item));
+    }
+    return new ArrayQuery<TOut>(result);
+  }
+
+  /**
+   * Like reduce but returns all intermediate accumulator values.
+   * Output length is `n + 1` (includes `init`), following Haskell `scanl'`.
+   *
+   * @example
+   * ```ts
+   * const running = query(data)
+   *   .array('items')
+   *   .scan((acc, item) => acc + item.price, 0)
+   *   .all();
+   * // => [0, 100, 150, 300, 375]
+   * ```
+   */
+  scan<TAcc>(fn: (acc: TAcc, item: TItem) => TAcc, init: TAcc): ArrayQuery<TAcc> {
+    const items = this.all();
+    const result: TAcc[] = [init];
+    let acc = init;
+    for (const item of items) {
+      acc = fn(acc, item);
+      result.push(acc);
+    }
+    return new ArrayQuery<TAcc>(result);
+  }
+
+  /**
+   * Returns the first `n` items from the filtered results.
+   * If `n >= length`, returns all items.  If `n <= 0`, returns empty.
+   */
+  take(n: number): ArrayQuery<TItem> {
+    return new ArrayQuery<TItem>(this.all().slice(0, n));
+  }
+
+  /**
+   * Skips the first `n` items from the filtered results.
+   * If `n >= length`, returns empty.  If `n <= 0`, returns all items.
+   */
+  drop(n: number): ArrayQuery<TItem> {
+    return new ArrayQuery<TItem>(this.all().slice(n));
+  }
+
+  /**
+   * Returns the longest prefix of items satisfying the predicate.
+   */
+  takeWhile(fn: (item: TItem) => boolean): ArrayQuery<TItem> {
+    const items = this.all();
+    const result: TItem[] = [];
+    for (const item of items) {
+      if (!fn(item)) break;
+      result.push(item);
+    }
+    return new ArrayQuery<TItem>(result);
+  }
+
+  /**
+   * Drops the longest prefix of items satisfying the predicate,
+   * then returns the remainder.
+   */
+  dropWhile(fn: (item: TItem) => boolean): ArrayQuery<TItem> {
+    const items = this.all();
+    let i = 0;
+    while (i < items.length && fn(items[i])) i++;
+    return new ArrayQuery<TItem>(items.slice(i));
+  }
+
+  /**
+   * Splits the filtered items into two groups: those satisfying the
+   * predicate and those that do not.
+   *
+   * @returns `[matching, nonMatching]` as a tuple of `ArrayQuery` instances.
+   */
+  partition(
+    fn: (item: TItem) => boolean,
+  ): [ArrayQuery<TItem>, ArrayQuery<TItem>] {
+    const yes: TItem[] = [];
+    const no: TItem[] = [];
+    for (const item of this.all()) {
+      (fn(item) ? yes : no).push(item);
+    }
+    return [new ArrayQuery<TItem>(yes), new ArrayQuery<TItem>(no)];
+  }
+
+  /**
+   * Pairs each item from this array with the corresponding item from
+   * `other`.  The result length equals the shorter of the two arrays.
+   */
+  zip<TOther>(other: TOther[]): ArrayQuery<[TItem, TOther]> {
+    const items = this.all();
+    const len = Math.min(items.length, other.length);
+    const result: [TItem, TOther][] = [];
+    for (let i = 0; i < len; i++) {
+      result.push([items[i], other[i]]);
+    }
+    return new ArrayQuery<[TItem, TOther]>(result);
+  }
+
+  /**
+   * Combines each item from this array with the corresponding item from
+   * `other` using `fn`.  The result length equals the shorter of the two.
+   */
+  zipWith<TOther, TOut>(
+    other: TOther[],
+    fn: (a: TItem, b: TOther) => TOut,
+  ): ArrayQuery<TOut> {
+    const items = this.all();
+    const len = Math.min(items.length, other.length);
+    const result: TOut[] = [];
+    for (let i = 0; i < len; i++) {
+      result.push(fn(items[i], other[i]));
+    }
+    return new ArrayQuery<TOut>(result);
+  }
+
   /** @internal Used by {@link WhereBuilder} to append a clause. */
   _pushClause(clause: any): this {
     this.clauses.push(clause);
