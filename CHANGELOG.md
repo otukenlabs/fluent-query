@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.0.0] - 2026-02-26
+
+### Added
+
+- **Assignable lazy chains** via `arrayPipeline()`: reusable, data-independent query composition -- record operations once, replay on any array via `.run(items)`
+- `ArrayPipeline` supports all chainable methods (`where`, `whereNot`, `filter`, `sort`, `take`, `drop`, `whereIn`, `whereSift`, `whereAll`, and all `*IfPresent` variants)
+- `PipelineWhereBuilder` proxy mirrors `WhereBuilder` modifiers (`not`, `ignoreCase`, `caseSensitive`, `trim`, `noTrim`) and terminals (`equals`, `contains`, `startsWith`, `endsWith`, `greaterThan`, `lessThan`, etc.)
+- Type-changing transforms (`map`, `map2`, `mapn`, `flatMap`, `scan`, `zip`, `zipWith`) return a new `ArrayPipeline<TOut>`
+- Pipelines are immutable -- each chained call returns a new instance
+
 ## [1.1.0] - 2026-02-26
 
 ### Added
