@@ -100,12 +100,12 @@ export class ObjectGroupQuery {
    * .all();
    * ```
    */
-  arrays<TItem = any>(arrayPath: string): ArrayQuery<TItem> {
+  arrays<TItem = any>(arrayPath: string): ArrayQuery<TItem, "bound"> {
     const items = this.flatArray<TItem>(arrayPath);
     const metadata = this.flatArrayWithMetadata<TItem>(arrayPath).map(
       ([, m]) => m,
     );
-    return new ArrayQuery<TItem>(items, {
+    return ArrayQuery._bound<TItem>(items, {
       groupsRootPath: this.groupsRootPath,
       arrayPath,
       itemMetadata: metadata,

@@ -34,12 +34,12 @@ import type { ArrayQuery } from "./array-query";
  * .all();
  * ```
  */
-export class WhereBuilder<TItem> {
+export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
   private opts: Required<WhereOptions> = { caseInsensitive: true, trim: true };
   private negate: boolean;
 
   constructor(
-    private readonly parent: ArrayQuery<TItem>,
+    private readonly parent: ArrayQuery<TItem, TMode>,
     private readonly path: string,
     negate: boolean = false,
   ) {
@@ -129,7 +129,7 @@ export class WhereBuilder<TItem> {
   equals(
     value: Primitive,
     options?: { ignoreCase?: boolean; trim?: boolean },
-  ): ArrayQuery<TItem> {
+  ): ArrayQuery<TItem, TMode> {
     if (options) {
       if (options.ignoreCase !== undefined) {
         this.opts.caseInsensitive = options.ignoreCase;
@@ -156,7 +156,7 @@ export class WhereBuilder<TItem> {
   eq(
     value: Primitive,
     options?: { ignoreCase?: boolean; trim?: boolean },
-  ): ArrayQuery<TItem> {
+  ): ArrayQuery<TItem, TMode> {
     return this.equals(value, options);
   }
 
@@ -166,7 +166,7 @@ export class WhereBuilder<TItem> {
   ne(
     value: Primitive,
     options?: { ignoreCase?: boolean; trim?: boolean },
-  ): ArrayQuery<TItem> {
+  ): ArrayQuery<TItem, TMode> {
     return this.not().equals(value, options);
   }
 
@@ -197,7 +197,7 @@ export class WhereBuilder<TItem> {
   contains(
     value: string,
     options?: { ignoreCase?: boolean; trim?: boolean },
-  ): ArrayQuery<TItem> {
+  ): ArrayQuery<TItem, TMode> {
     if (options) {
       if (options.ignoreCase !== undefined) {
         this.opts.caseInsensitive = options.ignoreCase;
@@ -239,7 +239,7 @@ export class WhereBuilder<TItem> {
   startsWith(
     value: string,
     options?: { ignoreCase?: boolean; trim?: boolean },
-  ): ArrayQuery<TItem> {
+  ): ArrayQuery<TItem, TMode> {
     if (options) {
       if (options.ignoreCase !== undefined) {
         this.opts.caseInsensitive = options.ignoreCase;
@@ -281,7 +281,7 @@ export class WhereBuilder<TItem> {
   endsWith(
     value: string,
     options?: { ignoreCase?: boolean; trim?: boolean },
-  ): ArrayQuery<TItem> {
+  ): ArrayQuery<TItem, TMode> {
     if (options) {
       if (options.ignoreCase !== undefined) {
         this.opts.caseInsensitive = options.ignoreCase;
@@ -308,7 +308,7 @@ export class WhereBuilder<TItem> {
    * .all();
    * ```
    */
-  matches(regex: RegExp): ArrayQuery<TItem> {
+  matches(regex: RegExp): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause({
       [this.path]: this.negate ? { $not: regex } : regex,
     });
@@ -327,7 +327,7 @@ export class WhereBuilder<TItem> {
    * .all();
    * ```
    */
-  greaterThan(value: number): ArrayQuery<TItem> {
+  greaterThan(value: number): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause({
       [this.path]: this.negate ? { $lte: value } : { $gt: value },
     });
@@ -336,7 +336,7 @@ export class WhereBuilder<TItem> {
   /**
    * Alias for {@link greaterThan}.
    */
-  gt(value: number): ArrayQuery<TItem> {
+  gt(value: number): ArrayQuery<TItem, TMode> {
     return this.greaterThan(value);
   }
 
@@ -353,7 +353,7 @@ export class WhereBuilder<TItem> {
    * .all();
    * ```
    */
-  greaterThanOrEqual(value: number): ArrayQuery<TItem> {
+  greaterThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause({
       [this.path]: this.negate ? { $lt: value } : { $gte: value },
     });
@@ -362,7 +362,7 @@ export class WhereBuilder<TItem> {
   /**
    * Alias for {@link greaterThanOrEqual}.
    */
-  gte(value: number): ArrayQuery<TItem> {
+  gte(value: number): ArrayQuery<TItem, TMode> {
     return this.greaterThanOrEqual(value);
   }
 
@@ -379,7 +379,7 @@ export class WhereBuilder<TItem> {
    * .all();
    * ```
    */
-  lessThan(value: number): ArrayQuery<TItem> {
+  lessThan(value: number): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause({
       [this.path]: this.negate ? { $gte: value } : { $lt: value },
     });
@@ -388,7 +388,7 @@ export class WhereBuilder<TItem> {
   /**
    * Alias for {@link lessThan}.
    */
-  lt(value: number): ArrayQuery<TItem> {
+  lt(value: number): ArrayQuery<TItem, TMode> {
     return this.lessThan(value);
   }
 
@@ -405,7 +405,7 @@ export class WhereBuilder<TItem> {
    * .all();
    * ```
    */
-  lessThanOrEqual(value: number): ArrayQuery<TItem> {
+  lessThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause({
       [this.path]: this.negate ? { $gt: value } : { $lte: value },
     });
@@ -414,7 +414,7 @@ export class WhereBuilder<TItem> {
   /**
    * Alias for {@link lessThanOrEqual}.
    */
-  lte(value: number): ArrayQuery<TItem> {
+  lte(value: number): ArrayQuery<TItem, TMode> {
     return this.lessThanOrEqual(value);
   }
 }

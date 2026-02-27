@@ -1,6 +1,9 @@
 /**
  * @file core/array-query.ts
- * @description ArrayQuery class for fluent array filtering and transformations.
+ * @description Unified ArrayQuery class with phantom mode parameter.
+ *
+ * ArrayQuery<TItem, 'bound'>  — data attached, terminals execute eagerly.
+ * ArrayQuery<TItem, 'unbound'> — no data, terminals record steps for later .run().
  */
 
 import sift from "sift";
@@ -12,790 +15,155 @@ import { AggregateQuery } from "../queries/aggregate-query";
 import { ValueArrayQuery } from "../queries/value-array-query";
 import { PathQuery } from "../queries/path-query";
 import { IndexQuery } from "../queries/index-query";
+import { QueryResult, _setArrayQueryRef } from "./query-result";
+import { PipelineStep, isWhereStep } from "./pipeline-step";
 
 /**
- * Fluent query wrapper around an array.
+ * Fluent query wrapper around an array, parameterized by execution mode.
  *
- * You typically do:
+ * - `'bound'`  — data is present; terminals return concrete results.
+ * - `'unbound'` — no data; terminals record steps for `.run()`.
  *
- * ```ts
- * query(resp).array('items')...
- * ```
+ * Every chainable method returns a **new** instance (immutable).
  *
- * @typeParam TItem - The type of each item in the array.
+ * @typeParam TItem - Element type.
+ * @typeParam TMode - `'bound'` (default) or `'unbound'`.
  */
-export class ArrayQuery<TItem> {
-  private readonly clauses: any[] = [];
-  private readonly metadata?: ArrayQueryMetadata;
+export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
+  // ── Private state ──────────────────────────────────────────────────────
 
-  constructor(
-    private readonly items: TItem[],
-    metadata?: ArrayQueryMetadata,
+  private readonly items: TItem[] | undefined;
+  private readonly steps: PipelineStep[];
+  private readonly clauses: readonly any[];
+  private readonly _arrayPath: string | undefined;
+  private readonly metadata: ArrayQueryMetadata | undefined;
+  private readonly _sortPath: string | undefined;
+  private readonly _sortDirection: "asc" | "desc";
+
+  // ── Constructor (private) ──────────────────────────────────────────────
+
+  private constructor(
+    items: TItem[] | undefined,
+    steps: PipelineStep[],
+    clauses: readonly any[],
+    arrayPath: string | undefined,
+    metadata: ArrayQueryMetadata | undefined,
+    sortPath: string | undefined,
+    sortDirection: "asc" | "desc",
   ) {
+    this.items = items;
+    this.steps = steps;
+    this.clauses = clauses;
+    this._arrayPath = arrayPath;
     this.metadata = metadata;
+    this._sortPath = sortPath;
+    this._sortDirection = sortDirection;
+  }
+
+  // ── Static factories ───────────────────────────────────────────────────
+
+  /** @internal Create a bound instance (has data). */
+  static _bound<T>(
+    items: T[],
+    metadata?: ArrayQueryMetadata,
+  ): ArrayQuery<T, "bound"> {
+    return new ArrayQuery<T, "bound">(
+      items,
+      [],
+      [],
+      metadata?.arrayPath,
+      metadata,
+      undefined,
+      "asc",
+    );
+  }
+
+  /** @internal Create an unbound instance (pipeline, no data). */
+  static _unbound<T>(
+    steps?: PipelineStep[],
+    arrayPath?: string,
+  ): ArrayQuery<T, "unbound"> {
+    return new ArrayQuery<T, "unbound">(
+      undefined,
+      steps ?? [],
+      [],
+      arrayPath,
+      undefined,
+      undefined,
+      "asc",
+    );
+  }
+
+  /** @internal Create an unbound instance from recorded steps. */
+  static _fromSteps<T>(
+    steps: PipelineStep[],
+    arrayPath?: string,
+  ): ArrayQuery<T, "unbound"> {
+    return ArrayQuery._unbound<T>(steps, arrayPath);
+  }
+
+  // ── Internal helpers ───────────────────────────────────────────────────
+
+  /**
+   * Creates a new instance with one step appended (no clause).
+   * Used for recording non-clause steps like sort, take, drop.
+   */
+  private _appendStep(method: string, ...args: any[]): ArrayQuery<TItem, TMode> {
+    return new ArrayQuery<TItem, TMode>(
+      this.items,
+      [...this.steps, { method, args }],
+      this.clauses,
+      this._arrayPath,
+      this.metadata,
+      this._sortPath,
+      this._sortDirection,
+    );
   }
 
   /**
-   * Adds a raw sift query for advanced use cases.
-   *
-   * This is the escape hatch for `$or`, `$in`, etc.
-   *
-   * @example OR query
-   * ```ts
-   * const results = query(resp)
-   * .array('items')
-   * .whereSift({ $or: [{ type: /pre/i }, { type: /basic/i }] })
-   * .all();
-   * ```
-   *
-   * @param siftQuery - A query object compatible with sift (Mongo-like syntax).
-   * @returns this (chainable)
+   * Creates a new instance with a different element type and a step appended.
+   * Used by type-changing transforms (map, flatMap, etc.) in unbound mode.
    */
-  whereSift(siftQuery: any): this {
-    this.clauses.push(siftQuery);
-    return this;
+  private _deriveUnbound<TOut>(
+    method: string,
+    ...args: any[]
+  ): ArrayQuery<TOut, TMode> {
+    return new ArrayQuery<TOut, TMode>(
+      undefined,
+      [...this.steps, { method, args }],
+      [],
+      this._arrayPath,
+      undefined,
+      undefined,
+      "asc",
+    );
   }
 
   /**
-   * Applies a filter using a DSL expression with comparison operators.
-   * Parses expressions like "field == value", "field > 100", "field contains 'text'", etc.
-   *
-   * Supported operators:
-   * - `==` or `===` → exact match
-   * - `!=` or `!==` or `not` → not equal
-   * - `>` → greater than (numeric)
-   * - `>=` → greater than or equal
-   * - `<` → less than (numeric)
-   * - `<=` → less than or equal
-   * - `contains` → substring match (case-insensitive by default, trims by default)
-   * - `startsWith` → prefix match (case-insensitive by default, trims by default)
-   * - `endsWith` → suffix match (case-insensitive by default, trims by default)
-   *
-   * Values can be:
-   * - String literals: `'Active'` or `"Active"`
-   * - Numbers: `1000`
-   * - Booleans: `true` or `false`
-   * - `null`
-   * - `undefined`
-   * - Unquoted strings: `Active` (treated as string)
-   *
-   * @example Exact match
-   * ```ts
-   * query(resp)
-   *   .array('items')
-   *   .filter("type == 'Premium'")
-   *   .all();
-   * ```
-   *
-   * @example Numeric comparison
-   * ```ts
-   * query(resp)
-   *   .array('items')
-   *   .filter('price >= 100')
-   *   .all();
-   * ```
-   *
-   * @example String contains (case-insensitive, default)
-   * ```ts
-   * query(resp)
-   *   .array('items')
-   *   .filter("description contains 'deluxe'")
-   *   .all();
-   * ```
-   *
-   * @example String contains (case-sensitive)
-   * ```ts
-   * query(resp)
-   *   .array('items')
-   *   .filter("description contains 'Deluxe'", { caseSensitive: true })
-   *   .all();
-   * ```
-   *
-   * @example String without trimming
-   * ```ts
-   * query(resp)
-   *   .array('items')
-   *   .filter("code startsWith ' ABC'", { trim: false })
-   *   .all();
-   * ```
-   *
-   * @example Multiple filters (chainable)
-   * ```ts
-   * query(resp)
-   *   .array('items')
-   *   .filter("type == 'Premium'")
-   *   .filter('price >= 100')
-   *   .all();
-   * ```
-   *
-   * @example Multiple conditions with "and"
-   * ```ts
-   * query(resp)
-   *   .array('people')
-   *   .filter("city == 'New York' and age > 30")
-   *   .all();
-   * ```
-   *
-   * @example Multiple conditions with "or"
-   * ```ts
-   * query(resp)
-   *   .array('people')
-   *   .filter("status == 'Active' or status == 'Pending'")
-   *   .all();
-   * ```
-   *
-   * @param expression - Filter expression string (e.g., "field == value" or "field == value and field2 == value2")
-   * @param options - Optional options:
-   *   - caseSensitive: for string operations
-   *   - trim: for string operations
-   *   - decimals: number of decimal places for numeric equality (e.g., decimals: 2 rounds to 2 decimal places)
-   * @returns this (chainable)
-   * @throws Error if the expression format is invalid
+   * Materializes the filtered + sorted items from accumulated clauses.
+   * Only callable in bound mode.
    */
-  filter(
-    expression: string,
-    options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
-  ): this {
-    const clause = parseCompositeFilterExpression(expression, options);
-    return this._pushClause(clause);
-  }
-
-  /**
-   * Conditionally applies a filter() only if the expression is not null/undefined.
-   * Useful for optional filtering without nested if statements.
-   *
-   * - If expression is provided (not null/undefined/empty): adds a filter() for that expression
-   * - If expression is null/undefined/empty: skips the filter entirely and continues with previous filters
-   *
-   * @example With expression provided
-   * ```ts
-   * const typeFilter = userInput ? "type == 'Premium'" : null;
-   * const result = query(resp)
-   *   .array('items')
-   *   .filterIfPresent(typeFilter)  // Only filters if typeFilter provided
-   *   .all();
-   * ```
-   *
-   * @example Without expression (null/undefined)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .filterIfPresent(null)  // No filter added
-   *   .all();
-   * ```
-   *
-   * @example With options
-   * ```ts
-   * const descriptionFilter = someCondition ? "description contains 'deluxe'" : null;
-   * const result = query(resp)
-   *   .array('items')
-   *   .filterIfPresent(descriptionFilter, { caseSensitive: true })
-   *   .all();
-   * ```
-   *
-   * @param expression - Filter expression string, or null/undefined to skip. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional options (caseSensitive, trim for string operations, decimals for numeric precision)
-   * @returns this (chainable)
-   */
-  filterIfPresent(
-    expression: string | null | undefined,
-    options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
-  ): this {
-    if (expression !== null && expression !== undefined && expression !== "") {
-      this.filter(expression, options);
+  private _executeFilter(): TItem[] {
+    const items = this.items!;
+    let results: TItem[];
+    if (this.clauses.length === 0) {
+      results = items;
+    } else {
+      const combined =
+        this.clauses.length === 1
+          ? this.clauses[0]
+          : { $and: [...this.clauses] };
+      results = items.filter(sift(combined));
     }
-    return this;
+    return this._applySorting(results);
   }
 
   /**
-   * Begins a where clause on a property path (supports nested dot-paths).
-   *
-   * @example
-   * ```ts
-   * query(resp)
-   * .array('items')
-   * .where('type')
-   * .contains('pre')
-   * .all();
-   * ```
-   *
-   * @param path - Field path (e.g. `"category"` or `"customer.relationship.description"`).
-   * @returns A {@link WhereBuilder} that configures matching behavior for this clause.
-   */
-  where(path: string): WhereBuilder<TItem> {
-    return new WhereBuilder<TItem>(this, path);
-  }
-
-  /**
-   * Begins a negated where clause on a property path.
-   *
-   * @example
-   * ```ts
-   * query(resp)
-   * .array('items')
-   * .whereNot('type')
-   * .equals('Basic')
-   * .all();
-   * ```
-   */
-  whereNot(path: string): WhereBuilder<TItem> {
-    return new WhereBuilder<TItem>(this, path, true);
-  }
-
-  /**
-   * Conditionally applies a where().equals() filter only if the value is not null/undefined.
-   * Useful for optional filtering without nested if statements.
-   *
-   * - If value is provided (not null/undefined): adds a where().equals() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example With value provided
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .where('type')
-   * .equals('premium')
-   * .whereIfPresent('code', itemCode)  // Adds filter: code === itemCode (if itemCode provided)
-   * .random();
-   * ```
-   *
-   * @example Without value (null/undefined)
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .where('type')
-   * .equals('premium')
-   * .whereIfPresent('code', null)  // No filter added; uses only the type filter
-   * .random();
-   * ```
-   *
-   * @example With case-sensitive matching
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .whereIfPresent('type', typeFilter, { ignoreCase: false })  // Case-sensitive if provided
-   * .random();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Value to match. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  whereIfPresent(
-    path: string,
-    value: any,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.where(path);
-      if (options?.ignoreCase === false) builder.caseSensitive();
-      if (options?.trim === false) builder.noTrim();
-      builder.equals(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a whereNot().equals() filter only if the value is not null/undefined.
-   * Useful for optional negated filtering without manual if statements.
-   *
-   * - If value is provided (not null/undefined): adds a whereNot().equals() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example With value provided
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .whereNotIfPresent('id', excludeId) // Excludes id if excludeId provided
-   *   .all();
-   * ```
-   *
-   * @example Without value (null/undefined)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .whereNotIfPresent('id', null) // No filter added
-   *   .all();
-   * ```
-   *
-   * @example With options (case-sensitive)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .whereNotIfPresent('type', excludeType, { ignoreCase: false })
-   *   .all();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Value to exclude. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  whereNotIfPresent(
-    path: string,
-    value: any,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.whereNot(path);
-      if (options?.ignoreCase === false) builder.caseSensitive();
-      if (options?.trim === false) builder.noTrim();
-      builder.equals(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a where().greaterThan() filter only if the value is not null/undefined.
-   *
-   * - If value is provided (not null/undefined): adds a where().greaterThan() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .where('type')
-   * .equals('premium')
-   * .greaterThanIfPresent('price', minPrice)  // Only filters if minPrice provided
-   * .all();
-   * ```
-   *
-   * @param path - Field path to compare
-   * @param value - Numeric threshold. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @returns this (chainable)
-   */
-  greaterThanIfPresent(path: string, value: number | null | undefined): this {
-    if (value !== null && value !== undefined) {
-      this.where(path).greaterThan(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a where().greaterThanOrEqual() filter only if the value is not null/undefined.
-   *
-   * - If value is provided (not null/undefined): adds a where().greaterThanOrEqual() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .greaterThanOrEqualIfPresent('price', minPrice)
-   * .all();
-   * ```
-   *
-   * @param path - Field path to compare
-   * @param value - Numeric threshold. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @returns this (chainable)
-   */
-  greaterThanOrEqualIfPresent(
-    path: string,
-    value: number | null | undefined,
-  ): this {
-    if (value !== null && value !== undefined) {
-      this.where(path).greaterThanOrEqual(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a where().lessThan() filter only if the value is not null/undefined.
-   *
-   * - If value is provided (not null/undefined): adds a where().lessThan() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .lessThanIfPresent('price', maxPrice)
-   * .all();
-   * ```
-   *
-   * @param path - Field path to compare
-   * @param value - Numeric threshold. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @returns this (chainable)
-   */
-  lessThanIfPresent(path: string, value: number | null | undefined): this {
-    if (value !== null && value !== undefined) {
-      this.where(path).lessThan(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a where().lessThanOrEqual() filter only if the value is not null/undefined.
-   *
-   * - If value is provided (not null/undefined): adds a where().lessThanOrEqual() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .lessThanOrEqualIfPresent('price', maxPrice)
-   * .all();
-   * ```
-   *
-   * @param path - Field path to compare
-   * @param value - Numeric threshold. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @returns this (chainable)
-   */
-  lessThanOrEqualIfPresent(
-    path: string,
-    value: number | null | undefined,
-  ): this {
-    if (value !== null && value !== undefined) {
-      this.where(path).lessThanOrEqual(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a where().contains() filter only if the value is not null/undefined.
-   *
-   * - If value is provided (not null/undefined): adds a where().contains() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .containsIfPresent('description', descFilter)  // Only filters if descFilter provided
-   * .all();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Substring to search for. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  containsIfPresent(
-    path: string,
-    value: string | null | undefined,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.where(path);
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
-      builder.contains(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a negated contains filter only if the value is not null/undefined.
-   * Useful for excluding items containing a substring if the parameter is provided.
-   *
-   * - If value is provided (not null/undefined): adds a where(path).not().contains(value) filter
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example With value provided
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notContainsIfPresent('type', excludeSubstring)
-   *   .all();
-   * ```
-   *
-   * @example Without value (null/undefined)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notContainsIfPresent('type', null)
-   *   .all();
-   * ```
-   *
-   * @example With options (case-sensitive)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notContainsIfPresent('type', excludeSubstring, { ignoreCase: false })
-   *   .all();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Substring to exclude. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  notContainsIfPresent(
-    path: string,
-    value: string | null | undefined,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.where(path).not();
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
-      builder.contains(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a where().startsWith() filter only if the value is not null/undefined.
-   *
-   * - If value is provided (not null/undefined): adds a where().startsWith() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .startsWithIfPresent('code', prefix)
-   * .all();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Prefix to match. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  startsWithIfPresent(
-    path: string,
-    value: string | null | undefined,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.where(path);
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
-      builder.startsWith(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a negated startsWith filter only if the value is not null/undefined.
-   * Useful for excluding items starting with a prefix if the parameter is provided.
-   *
-   * - If value is provided (not null/undefined): adds a where(path).not().startsWith(value) filter
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example With value provided
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notStartsWithIfPresent('code', excludePrefix)
-   *   .all();
-   * ```
-   *
-   * @example Without value (null/undefined)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notStartsWithIfPresent('code', null)
-   *   .all();
-   * ```
-   *
-   * @example With options (case-sensitive)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notStartsWithIfPresent('code', excludePrefix, { ignoreCase: false })
-   *   .all();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Prefix to exclude. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  notStartsWithIfPresent(
-    path: string,
-    value: string | null | undefined,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.where(path).not();
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
-      builder.startsWith(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a where().endsWith() filter only if the value is not null/undefined.
-   *
-   * - If value is provided (not null/undefined): adds a where().endsWith() filter for that path/value
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example
-   * ```ts
-   * const result = query(resp)
-   * .array('items')
-   * .endsWithIfPresent('code', suffix)
-   * .all();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Suffix to match. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  endsWithIfPresent(
-    path: string,
-    value: string | null | undefined,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.where(path);
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
-      builder.endsWith(value);
-    }
-    return this;
-  }
-
-  /**
-   * Conditionally applies a negated endsWith filter only if the value is not null/undefined.
-   * Useful for excluding items ending with a suffix if the parameter is provided.
-   *
-   * - If value is provided (not null/undefined): adds a where(path).not().endsWith(value) filter
-   * - If value is null/undefined: skips the filter entirely and continues with previous filters
-   *
-   * @example With value provided
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notEndsWithIfPresent('code', excludeSuffix)
-   *   .all();
-   * ```
-   *
-   * @example Without value (null/undefined)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notEndsWithIfPresent('code', null)
-   *   .all();
-   * ```
-   *
-   * @example With options (case-sensitive)
-   * ```ts
-   * const result = query(resp)
-   *   .array('items')
-   *   .notEndsWithIfPresent('code', excludeSuffix, { ignoreCase: false })
-   *   .all();
-   * ```
-   *
-   * @param path - Field path to match against
-   * @param value - Suffix to exclude. If null/undefined, the filter is skipped and the query continues unchanged.
-   * @param options - Optional matching options (ignoreCase, trim)
-   * @returns this (chainable)
-   */
-  notEndsWithIfPresent(
-    path: string,
-    value: string | null | undefined,
-    options?: { ignoreCase?: boolean; trim?: boolean },
-  ): this {
-    if (value !== null && value !== undefined) {
-      const builder = this.where(path).not();
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
-      builder.endsWith(value);
-    }
-    return this;
-  }
-
-  /**
-   * Filters items where the value at `path` is included in the provided list.
-   *
-   * @example
-   * ```ts
-   * const allowed = ["Premium", "Deluxe"];
-   * const results = query(resp.data)
-   * .array('items')
-   * .whereIn('type', allowed)
-   * .all();
-   * ```
-   * @throws Error if empty array is passed as values.
-   */
-  whereIn(path: string, values: Primitive[]): this {
-    if (!Array.isArray(values) || values.length === 0) {
-      throw new Error(
-        `whereIn("${path}") requires a non-empty array of values.`,
-      );
-    }
-    this.clauses.push({ [path]: { $in: values } });
-    return this;
-  }
-
-  /**
-   * Filters items where all provided field-value pairs match exactly.
-   * Useful for finding an object by multiple criteria.
-   *
-   * @example
-   * ```ts
-   * const item = query(resp.data)
-   * .array('items')
-   * .whereAll({ type: 'Premium', inStock: true })
-   * .first();
-   * ```
-   *
-   * @param criteria - Object with field paths and expected values (exact match).
-   * @throws Error if no matches are found when chained with `.first()`, `.one()`, etc.
-   */
-  whereAll(criteria: Record<string, Primitive>): this {
-    this.clauses.push(criteria);
-    return this;
-  }
-
-  /**
-   * Sorts the array items by the value at the given path.
-   * Can sort in ascending (default) or descending order.
-   * Handles null/undefined values by placing them at the end.
-   *
-   * @example Sort ascending (default)
-   * ```ts
-   * const items = query(data)
-   *   .array('items')
-   *   .sort('price')
-   *   .all();
-   * // => Items sorted by price from lowest to highest
-   * ```
-   *
-   * @example Sort descending
-   * ```ts
-   * const items = query(data)
-   *   .array('items')
-   *   .sort('price', 'desc')
-   *   .all();
-   * // => Items sorted by price from highest to lowest
-   * ```
-   *
-   * @example Chaining with filters
-   * ```ts
-   * const items = query(data)
-   *   .array('items')
-   *   .where('category').equals('Premium')
-   *   .sort('price')
-   *   .all();
-   * // => Premium items sorted by price
-   * ```
-   *
-   * @param path - Field path to sort by (supports dot notation for nested fields)
-   * @param direction - Sort direction: 'asc' (default) or 'desc'
-   * @returns this (chainable)
-   */
-  sort(path: string, direction: "asc" | "desc" = "asc"): this {
-    // Store sort configuration for later use in terminal methods
-    (this as any)._sortPath = path;
-    (this as any)._sortDirection = direction;
-    return this;
-  }
-
-  /**
-   * @internal
+   * Applies sort if configured.
    */
   private _applySorting(items: TItem[]): TItem[] {
-    const sortPath = (this as any)._sortPath;
-    const sortDirection = (this as any)._sortDirection || "asc";
+    const sortPath = this._sortPath;
+    const sortDirection = this._sortDirection || "asc";
 
     if (!sortPath) {
       return items;
@@ -806,7 +174,6 @@ export class ArrayQuery<TItem> {
       const valueA = getByPath(a as any, sortPath);
       const valueB = getByPath(b as any, sortPath);
 
-      // Handle null/undefined - place them at the end
       if (valueA === null || valueA === undefined) {
         return valueB === null || valueB === undefined ? 0 : 1;
       }
@@ -814,7 +181,6 @@ export class ArrayQuery<TItem> {
         return -1;
       }
 
-      // Compare values
       let comparison = 0;
       if (valueA < valueB) {
         comparison = -1;
@@ -829,194 +195,444 @@ export class ArrayQuery<TItem> {
   }
 
   /**
-   * Returns all matches.
-   *
-   * If no filters are added, returns the original array items.
+   * Replays recorded steps onto a fresh bound ArrayQuery.
+   * Used by .run() to execute a pipeline against data.
    */
-  all(): TItem[] {
-    let results: TItem[];
-    if (this.clauses.length === 0) {
-      results = this.items;
-    } else {
-      const combined =
-        this.clauses.length === 1 ? this.clauses[0] : { $and: this.clauses };
-      results = this.items.filter(sift(combined));
+  private static _replay<T>(
+    items: T[],
+    steps: readonly PipelineStep[],
+    metadata?: ArrayQueryMetadata,
+  ): ArrayQuery<T, "bound"> {
+    let current: any = ArrayQuery._bound(items, metadata);
+
+    for (const step of steps) {
+      if (isWhereStep(step)) {
+        let builder = current[step.method](step.args[0]);
+        for (const mod of step.modifiers) {
+          builder = builder[mod.name](...mod.args);
+        }
+        current = builder[step.terminal.method](...step.terminal.args);
+      } else {
+        current = current[step.method](...step.args);
+      }
     }
 
-    return this._applySorting(results);
+    return current;
+  }
+
+  // ── @internal getters (cross-class access) ─────────────────────────────
+
+  /** @internal */
+  _getSteps(): readonly PipelineStep[] {
+    return this.steps;
+  }
+
+  /** @internal */
+  _getArrayPath(): string | undefined {
+    return this._arrayPath;
+  }
+
+  // ── Chainable filter methods ───────────────────────────────────────────
+
+  /**
+   * Adds a raw sift query.
+   */
+  whereSift(siftQuery: any): ArrayQuery<TItem, TMode> {
+    return this._pushClause(siftQuery);
   }
 
   /**
-   * Returns the number of matching items.
-   * Useful for assertions.
+   * Applies a filter using a DSL expression.
    */
-  count(): number {
-    return this.all().length;
+  filter(
+    expression: string,
+    options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
+  ): ArrayQuery<TItem, TMode> {
+    const clause = parseCompositeFilterExpression(expression, options);
+    return this._pushClause(clause);
   }
 
   /**
-   * Returns true if at least one item matches the filters.
-   *
-   * @example
-   * ```ts
-   * const hasItems = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .exists();
-   * // → true if any item is Premium
-   * ```
-   *
-   * @example With conditionals
-   * ```ts
-   * if (query(data).array('errors').where('severity').equals('critical').exists()) {
-   *   handleCriticalError();
-   * }
-   * ```
+   * Conditionally applies filter() if expression is present.
    */
-  exists(): boolean {
-    return this.count() > 0;
+  filterIfPresent(
+    expression: string | null | undefined,
+    options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
+  ): ArrayQuery<TItem, TMode> {
+    if (expression !== null && expression !== undefined && expression !== "") {
+      return this.filter(expression, options);
+    }
+    return this;
   }
 
   /**
-   * Returns true if all items in the array match the filters.
-   *
-   * @example
-   * ```ts
-   * const allComplete = query(resp)
-   *   .array('items')
-   *   .where('status').equals('completed')
-   *   .every();
-   * // → true only if ALL items are completed
-   * ```
-   *
-   * @example With conditionals
-   * ```ts
-   * if (!query(data).array('items').where('isValid').equals(true).every()) {
-   *   alert('Not all items are valid');
-   * }
-   * ```
+   * Begins a where clause on a property path.
    */
-  every(): boolean {
-    return this.count() === this.items.length;
+  where(path: string): WhereBuilder<TItem, TMode> {
+    return new WhereBuilder<TItem, TMode>(this, path);
   }
 
   /**
-   * Returns the sum of values at the given path for all matching items.
-   *
-   * @example
-   * ```ts
-   * const totalRevenue = query(resp)
-   *   .array('items')
-   *   .where('category').equals('premium')
-   *   .sum('price');
-   * // => 1500.50
-   * ```
-   *
-   * @param path - Field path containing numeric values to sum
-   * @returns Sum of all numeric values at the path
+   * Begins a negated where clause on a property path.
    */
-  sum(path: string): number {
-    const results = this.all();
+  whereNot(path: string): WhereBuilder<TItem, TMode> {
+    return new WhereBuilder<TItem, TMode>(this, path, true);
+  }
+
+  /**
+   * Conditionally applies where().equals() if value is present.
+   */
+  whereIfPresent(
+    path: string,
+    value: any,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path);
+      if (options?.ignoreCase === false) builder.caseSensitive();
+      if (options?.trim === false) builder.noTrim();
+      return builder.equals(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies whereNot().equals() if value is present.
+   */
+  whereNotIfPresent(
+    path: string,
+    value: any,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.whereNot(path);
+      if (options?.ignoreCase === false) builder.caseSensitive();
+      if (options?.trim === false) builder.noTrim();
+      return builder.equals(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies where().greaterThan() if value is present.
+   */
+  greaterThanIfPresent(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      return this.where(path).greaterThan(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies where().greaterThanOrEqual() if value is present.
+   */
+  greaterThanOrEqualIfPresent(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      return this.where(path).greaterThanOrEqual(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies where().lessThan() if value is present.
+   */
+  lessThanIfPresent(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      return this.where(path).lessThan(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies where().lessThanOrEqual() if value is present.
+   */
+  lessThanOrEqualIfPresent(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      return this.where(path).lessThanOrEqual(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies where().contains() if value is present.
+   */
+  containsIfPresent(
+    path: string,
+    value: string | null | undefined,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path);
+      if (options?.ignoreCase !== false) builder.ignoreCase();
+      if (options?.trim === false) builder.noTrim();
+      return builder.contains(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies negated contains if value is present.
+   */
+  notContainsIfPresent(
+    path: string,
+    value: string | null | undefined,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path).not();
+      if (options?.ignoreCase !== false) builder.ignoreCase();
+      if (options?.trim === false) builder.noTrim();
+      return builder.contains(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies where().startsWith() if value is present.
+   */
+  startsWithIfPresent(
+    path: string,
+    value: string | null | undefined,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path);
+      if (options?.ignoreCase !== false) builder.ignoreCase();
+      if (options?.trim === false) builder.noTrim();
+      return builder.startsWith(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies negated startsWith if value is present.
+   */
+  notStartsWithIfPresent(
+    path: string,
+    value: string | null | undefined,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path).not();
+      if (options?.ignoreCase !== false) builder.ignoreCase();
+      if (options?.trim === false) builder.noTrim();
+      return builder.startsWith(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies where().endsWith() if value is present.
+   */
+  endsWithIfPresent(
+    path: string,
+    value: string | null | undefined,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path);
+      if (options?.ignoreCase !== false) builder.ignoreCase();
+      if (options?.trim === false) builder.noTrim();
+      return builder.endsWith(value);
+    }
+    return this;
+  }
+
+  /**
+   * Conditionally applies negated endsWith if value is present.
+   */
+  notEndsWithIfPresent(
+    path: string,
+    value: string | null | undefined,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path).not();
+      if (options?.ignoreCase !== false) builder.ignoreCase();
+      if (options?.trim === false) builder.noTrim();
+      return builder.endsWith(value);
+    }
+    return this;
+  }
+
+  /**
+   * Filters items where value at path is in the provided list.
+   */
+  whereIn(path: string, values: Primitive[]): ArrayQuery<TItem, TMode> {
+    if (!Array.isArray(values) || values.length === 0) {
+      throw new Error(
+        `whereIn("${path}") requires a non-empty array of values.`,
+      );
+    }
+    return this._pushClause({ [path]: { $in: values } });
+  }
+
+  /**
+   * Filters items where all provided field-value pairs match exactly.
+   */
+  whereAll(criteria: Record<string, Primitive>): ArrayQuery<TItem, TMode> {
+    return this._pushClause(criteria);
+  }
+
+  /**
+   * Sorts items by the value at the given path.
+   */
+  sort(
+    path: string,
+    direction: "asc" | "desc" = "asc",
+  ): ArrayQuery<TItem, TMode> {
+    return new ArrayQuery<TItem, TMode>(
+      this.items,
+      [...this.steps, { method: "sort", args: [path, direction] }],
+      this.clauses,
+      this._arrayPath,
+      this.metadata,
+      path,
+      direction,
+    );
+  }
+
+  // ── Terminal methods (conditional on TMode) ────────────────────────────
+
+  /**
+   * Returns all matches. In bound mode returns QueryResult (IS an array).
+   * In unbound mode records the terminal and returns the pipeline.
+   */
+  all(): TMode extends "bound"
+    ? QueryResult<TItem>
+    : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("all") as any;
+    }
+    const results = this._executeFilter();
+    const stepsWithTerminal = [...this.steps, { method: "all", args: [] }];
+    return QueryResult.create(results, stepsWithTerminal, this._arrayPath) as any;
+  }
+
+  /**
+   * Returns the count of matching items.
+   */
+  count(): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("count") as any;
+    }
+    return this._executeFilter().length as any;
+  }
+
+  /**
+   * Returns true if at least one item matches.
+   */
+  exists(): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("exists") as any;
+    }
+    return (this._executeFilter().length > 0) as any;
+  }
+
+  /**
+   * Returns true if all items match the filters.
+   */
+  every(): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("every") as any;
+    }
+    return (this._executeFilter().length === this.items!.length) as any;
+  }
+
+  /**
+   * Returns the sum of values at path.
+   */
+  sum(path: string): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("sum", path) as any;
+    }
+    const results = this._executeFilter();
     return results.reduce((total, item) => {
       const value = getByPath(item as any, path);
       const num = typeof value === "number" ? value : 0;
       return total + num;
+    }, 0) as any;
+  }
+
+  /**
+   * Returns the average of values at path.
+   */
+  average(
+    path: string,
+  ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("average", path) as any;
+    }
+    const results = this._executeFilter();
+    if (results.length === 0) return 0 as any;
+    const total = results.reduce((sum, item) => {
+      const value = getByPath(item as any, path);
+      return sum + (typeof value === "number" ? value : 0);
     }, 0);
+    return (total / results.length) as any;
   }
 
   /**
-   * Returns the average of values at the given path for all matching items.
-   *
-   * @example
-   * ```ts
-   * const avgPrice = query(resp)
-   *   .array('items')
-   *   .where('category').equals('premium')
-   *   .average('price');
-   * // => 312.50
-   * ```
-   *
-   * @param path - Field path containing numeric values to average
-   * @returns Average of all numeric values at the path
+   * Returns the minimum value at path.
    */
-  average(path: string): number {
-    const results = this.all();
-    if (results.length === 0) return 0;
-    const total = this.sum(path);
-    return total / results.length;
-  }
-
-  /**
-   * Returns the minimum value at the given path for all matching items.
-   *
-   * @example
-   * ```ts
-   * const minPrice = query(resp)
-   *   .array('items')
-   *   .where('category').equals('premium')
-   *   .min('price');
-   * // => 150.00
-   * ```
-   *
-   * @param path - Field path containing comparable values
-   * @returns Minimum value at the path (null if no items)
-   */
-  min(path: string): number | null {
-    const results = this.all();
-    if (results.length === 0) return null;
+  min(
+    path: string,
+  ): TMode extends "bound" ? number | null : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("min", path) as any;
+    }
+    const results = this._executeFilter();
+    if (results.length === 0) return null as any;
     const values = results
       .map((item) => getByPath(item as any, path))
       .filter((v) => v !== null && v !== undefined && !isNaN(Number(v)))
       .map(Number);
-    return values.length > 0 ? Math.min(...values) : null;
+    return (values.length > 0 ? Math.min(...values) : null) as any;
   }
 
   /**
-   * Returns the maximum value at the given path for all matching items.
-   *
-   * @example
-   * ```ts
-   * const maxPrice = query(resp)
-   *   .array('items')
-   *   .where('category').equals('premium')
-   *   .max('price');
-   * // => 750.00
-   * ```
-   *
-   * @param path - Field path containing comparable values
-   * @returns Maximum value at the path (null if no items)
+   * Returns the maximum value at path.
    */
-  max(path: string): number | null {
-    const results = this.all();
-    if (results.length === 0) return null;
+  max(
+    path: string,
+  ): TMode extends "bound" ? number | null : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("max", path) as any;
+    }
+    const results = this._executeFilter();
+    if (results.length === 0) return null as any;
     const values = results
       .map((item) => getByPath(item as any, path))
       .filter((v) => v !== null && v !== undefined && !isNaN(Number(v)))
       .map(Number);
-    return values.length > 0 ? Math.max(...values) : null;
+    return (values.length > 0 ? Math.max(...values) : null) as any;
   }
 
   /**
-   * Returns the sum of products across multiple paths for all matching items.
-   * For each item, multiplies the values at the given paths together, then sums all products.
-   *
-   * @example
-   * ```ts
-   * const totalValue = query(resp)
-   *   .array('items')
-   *   .where('status').equals('sold')
-   *   .sumOfProducts('quantity', 'unitPrice');
-   * // => 150000 (sum of quantity*unitPrice for all items)
-   * ```
-   *
-   * @param paths - Field paths containing numeric values to multiply
-   * @returns Sum of products across all items
+   * Returns the sum of products across paths.
    */
-  sumOfProducts(...paths: string[]): number {
+  sumOfProducts(
+    ...paths: string[]
+  ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("sumOfProducts", ...paths) as any;
+    }
     if (paths.length === 0) {
       throw new Error("sumOfProducts() requires at least one path");
     }
-    return this.all().reduce((sum, item) => {
+    return this._executeFilter().reduce((sum, item) => {
       let productValue = 1;
       for (const path of paths) {
         const value = getByPath(item as any, path);
@@ -1029,147 +645,59 @@ export class ArrayQuery<TItem> {
         productValue *= num;
       }
       return sum + productValue;
-    }, 0);
+    }, 0) as any;
   }
 
   /**
-   * Returns a chainable aggregation helper for building multiple aggregations at once.
-   *
-   * @example Single aggregation
-   * ```ts
-   * const total = query(resp)
-   *   .array('items')
-   *   .sum('price'); // Simple direct call
-   * ```
-   *
-   * @example Multiple aggregations
-   * ```ts
-   * const stats = query(resp)
-   *   .array('items')
-   *   .where('type').equals('premium')
-   *   .aggregate()
-   *   .sum('price')
-   *   .average('price')
-   *   .min('price')
-   *   .max('price')
-   *   .count()
-   *   .all();
-   * // => { sum: 1500, average: 300, min: 100, max: 600, count: 5 }
-   * ```
-   *
-   * @returns An {@link AggregateQuery} helper for chainable aggregations
+   * Returns a chainable aggregation helper.
    */
   aggregate(): AggregateQuery {
-    return new AggregateQuery(this.all());
+    if (this.items === undefined) {
+      throw new Error("aggregate() is only available on bound queries.");
+    }
+    return new AggregateQuery(this._executeFilter());
   }
 
   /**
-   * Groups matching items by the value at the given path.
-   * Returns an object where keys are the grouped values and values are arrays of items.
-   *
-   * @example Group by category
-   * ```ts
-   * const grouped = query(resp)
-   *   .array('items')
-   *   .groupBy('category');
-   * // => {
-   * //   "Premium": [{ category: 'Premium', name: 'Item1' }, { category: 'Premium', name: 'Item2' }],
-   * //   "Basic": [{ category: 'Basic', name: 'Item3' }],
-   * //   "Standard": [{ category: 'Standard', name: 'Item4' }]
-   * // }
-   * ```
-   *
-   * @example Group filtered results
-   * ```ts
-   * const inStockByType = query(resp)
-   *   .array('items')
-   *   .where('price').greaterThan(100)
-   *   .groupBy('type');
-   * // => { "Premium": [...], "Standard": [...] }
-   * ```
-   *
-   * @example Group by nested path
-   * ```ts
-   * const byLocation = query(resp)
-   *   .array('stores')
-   *   .groupBy('address.country');
-   * // => { "USA": [...], "Canada": [...] }
-   * ```
-   *
-   * @param path - Field path to group by (supports dot notation for nested fields)
-   * @returns Object with grouped items: `{ [groupValue]: TItem[] }`
+   * Groups matching items by path value.
    */
-  groupBy(path: string): Record<string, TItem[]> {
-    const results = this.all();
+  groupBy(
+    path: string,
+  ): TMode extends "bound"
+    ? Record<string, TItem[]>
+    : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("groupBy", path) as any;
+    }
+    const results = this._executeFilter();
     const grouped: Record<string, TItem[]> = {};
 
     for (const item of results) {
       const groupValue = getByPath(item as any, path);
-      const key = String(groupValue); // Convert to string for object key
-
+      const key = String(groupValue);
       if (!grouped[key]) {
         grouped[key] = [];
       }
       grouped[key].push(item);
     }
 
-    return grouped;
+    return grouped as any;
   }
 
   /**
-   * Returns distinct/unique items, keeping one item per unique value.
-   *
-   * When a `path` is provided, keeps the first item for each unique value at that path.
-   * Without a path, removes duplicate items entirely (by object comparison).
-   *
-   * If `path` is a single property name (no dots), it searches that property at any depth
-   * within each item. If multiple matches are found in the same item, it throws to avoid
-   * ambiguity. Use a dot-path to disambiguate.
-   *
-   * @example Keep first item per unique category (removes duplicates but keeps one)
-   * ```ts
-   * const uniqueByCategory = query(resp)
-   *   .array('items')
-   *   .distinct('category');
-   * // => [
-   * //      { category: 'Premium', name: 'Item1', ... },     // First Premium item kept
-   * //      { category: 'Basic', name: 'Item3', ... },       // First Basic item kept
-   * //      { category: 'Standard', name: 'Item4', ... }     // First Standard item kept
-   * //    ]
-   * // If multiple items have the same category, only the first occurrence is kept
-   * ```
-   *
-   * @example Keep first item per unique type
-   * ```ts
-   * const uniqueByType = query(resp)
-   *   .array('items')
-   *   .distinct('type');
-   * // => [
-   * //      { type: 'Premium', id: 101, ... },   // First Premium item kept
-   * //      { type: 'Basic', id: 205, ... }      // First Basic item kept
-   * //    ]
-   * // Even if 15 items are Premium, only the first Premium item is returned
-   * ```
-   *
-   * @example Remove all duplicate items (by entire object)
-   * ```ts
-   * const unique = query(resp)
-   *   .array('items')
-   *   .distinct();
-   * // => Items with unique values (duplicates removed)
-   * ```
-   *
-   * @param path - Optional field path to determine uniqueness. If omitted, uses entire item for comparison
-   * @returns Array of distinct items
+   * Returns distinct items by unique value at path.
    */
-  distinct(path?: string): TItem[] {
-    const results = this.all();
+  distinct(
+    path?: string,
+  ): TMode extends "bound" ? TItem[] : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("distinct", path) as any;
+    }
+    const results = this._executeFilter();
     if (!path) {
-      // Remove duplicate items entirely (by reference)
-      return Array.from(new Set(results));
+      return Array.from(new Set(results)) as any;
     }
 
-    // Remove duplicates by property value
     const seen = new Set<any>();
     const unique: TItem[] = [];
     const isDotPath = path.includes(".");
@@ -1184,13 +712,12 @@ export class ArrayQuery<TItem> {
       }
     }
 
-    return unique;
+    return unique as any;
   }
 
   /**
    * @internal
    * Finds a single matching property value anywhere in the object tree.
-   * Throws if none or more than one match exists in the same item.
    */
   private _getUniqueDeepPropertyValue(obj: any, property: string): any {
     const matches: any[] = [];
@@ -1229,88 +756,25 @@ export class ArrayQuery<TItem> {
   }
 
   /**
-   * Returns a chainable helper for values at the given path for all matches.
-   * Allows further operations like random(), first(), string(), number(), etc.
-   *
-   * @example Get all values
-   * ```ts
-   * const numbers = query(resp.result.data)
-   * .array('items')
-   * .pluck('id')
-   * .all();
-   * ```
-   *
-   * @example Chain operations
-   * ```ts
-   * const randomId = query(data)
-   * .array('users')
-   * .pluck('id')
-   * .random();
-   *
-   * const stringIds = query(data)
-   * .array('items')
-   * .pluck('id')
-   * .string()
-   * .all();
-   * // [1, 2, 3] → ['1', '2', '3']
-   * ```
+   * Extracts values at path as a chainable ValueArrayQuery.
    */
   pluck<TValue = any>(path: string): ValueArrayQuery<TValue> {
-    const values = this.all().map((item) =>
+    if (this.items === undefined) {
+      throw new Error("pluck() is only available on bound queries.");
+    }
+    const values = this._executeFilter().map((item) =>
       getByPath(item as any, path),
     ) as TValue[];
     return new ValueArrayQuery(values);
   }
 
   /**
-   * Recursively searches for a property or path at any depth and returns a chainable helper.
-   * Unlike pluck(), which looks for a path from the array item root, findAll() searches
-   * the entire object tree and finds the property/path anywhere it exists.
-   *
-   * **Warning**: If the same property/path appears in multiple places within an object structure,
-   * findAll() will return ALL matching values. Use pluck() if you need a specific path from the root.
-   *
-   * @example Simple property name
-   * ```ts
-   * const data = [
-   *   { "name": "Chris", "age": 23, "address": { "city": "New York" } },
-   *   { "name": "Emily", "age": 19, "address": { "city": "Atlanta" } }
-   * ];
-   * query(data).arrayRoot().findAll('city').all();
-   * // => ['New York', 'Atlanta']
-   * ```
-   *
-   * @example Path notation (finds path anywhere in tree)
-   * ```ts
-   * const data = [
-   *   {
-   *     "orders": [{ "customer": { "address": { "city": "NYC" } } }],
-   *     "metadata": { "customer": { "address": { "city": "Atlanta" } } }
-   *   }
-   * ];
-   * query(data).arrayRoot().findAll('customer.address.city').all();
-   * // => ['NYC', 'Atlanta'] // Finds BOTH, regardless of nesting level
-   * ```
-   *
-   * @example Multiple occurrences of same key
-   * ```ts
-   * const data = [
-   *   { "id": 1, "user": { "id": 100, "name": "Alice" } }
-   * ];
-   * query(data).arrayRoot().findAll('id').all();
-   * // => [1, 100] // Returns BOTH id values!
-   * ```
-   *
-   * @example Chaining operations
-   * ```ts
-   * const firstCity = query(data).arrayRoot().findAll('city').first();
-   * const cityStrings = query(data).arrayRoot().findAll('zipCode').string().all();
-   * ```
-   *
-   * @param pathOrProperty - Property name or dot-notation path to search for recursively
-   * @returns ValueArrayQuery for chaining and conversion
+   * Recursively searches for a property at any depth.
    */
   findAll<TValue = any>(pathOrProperty: string): ValueArrayQuery<TValue> {
+    if (this.items === undefined) {
+      throw new Error("findAll() is only available on bound queries.");
+    }
     const results: TValue[] = [];
     const isPath = pathOrProperty.includes(".");
 
@@ -1321,19 +785,16 @@ export class ArrayQuery<TItem> {
 
       if (typeof obj === "object") {
         if (isPath) {
-          // Check if this object has the complete path
           const value = getByPath(obj, pathOrProperty);
           if (value !== undefined) {
             results.push(value);
           }
         } else {
-          // Check if this object has the property
           if (pathOrProperty in obj) {
             results.push(obj[pathOrProperty]);
           }
         }
 
-        // Recursively search nested objects/arrays
         if (Array.isArray(obj)) {
           for (const item of obj) {
             recursiveSearch(item);
@@ -1346,8 +807,7 @@ export class ArrayQuery<TItem> {
       }
     };
 
-    // Search through all matching items
-    for (const item of this.all()) {
+    for (const item of this._executeFilter()) {
       recursiveSearch(item);
     }
 
@@ -1355,50 +815,23 @@ export class ArrayQuery<TItem> {
   }
 
   /**
-   * Picks one or more properties/paths from each matching item and returns a flat object per item.
-   * Keys are the provided paths, or custom keys if using an object.
-   *
-   * @example Single path
-   * ```ts
-   * const ids = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .pick('id');
-   * // => [{ "id": 1 }, { "id": 3 }]
-   * ```
-   *
-   * @example Multiple paths
-   * ```ts
-   * const summaries = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .pick(['id', 'price.current']);
-   * // => [{ "id": 1, "price.current": 500 }, ...]
-   * ```
-   *
-   * @example With aliases (custom keys)
-   * ```ts
-   * const summaries = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .pick({ name: 'name', category: 'category.main' });
-   * // => [{ "name": "Item1", "category": "Premium" }, ...]
-   * ```
+   * Picks properties from each matching item.
    */
   pick(
     pathOrPaths: string | string[] | Record<string, string>,
     ...rest: string[]
   ): Array<Record<string, any>> {
-    return this.all().map((item) => {
+    if (this.items === undefined) {
+      throw new Error("pick() is only available on bound queries.");
+    }
+    return this._executeFilter().map((item) => {
       const result: Record<string, any> = {};
 
       if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
-        // Object format: { outputKey: 'path' }
         for (const [key, path] of Object.entries(pathOrPaths)) {
           result[key] = getByPath(item as any, path);
         }
       } else {
-        // String or array format
         const paths = Array.isArray(pathOrPaths)
           ? pathOrPaths
           : [pathOrPaths, ...rest];
@@ -1412,89 +845,61 @@ export class ArrayQuery<TItem> {
   }
 
   /**
-   * Returns the first match.
-   *
-   * @throws Error if no matches are found.
+   * Returns the first match. Throws if no matches.
    */
-  first(): TItem {
-    const results = this.all();
+  first(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("first") as any;
+    }
+    const results = this._executeFilter();
     if (results.length === 0) {
       throw new Error("No matches found for first().");
     }
-    return results[0];
+    return results[0] as any;
   }
 
   /**
-   * Alias for {@link first} to clarify intent.
-   *
-   * @throws Error if no matches are found.
+   * Alias for first().
    */
-  any(): TItem {
+  any(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
     return this.first();
   }
 
   /**
-   * Returns a random match.
-   *
-   * @throws Error if no matches are found.
+   * Returns a random match. Throws if no matches.
    */
-  random(): TItem {
-    const results = this.all();
+  random(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("random") as any;
+    }
+    const results = this._executeFilter();
     if (results.length === 0) {
       throw new Error("No matches found for random().");
     }
     const index = Math.floor(Math.random() * results.length);
-    return results[index];
+    return results[index] as any;
   }
 
   /**
-   * Returns a random match with its full path from root as a tuple.
-   * Throws if no matches found.
-   * Works with both direct array queries (query().array()) and grouped array queries (query().objectGroups().arrays()).
-   *
-   * @example Direct array query
-   * ```ts
-   * const [item, path] = query(resp)
-   * .array('items')
-   * .where('type')
-   * .equals('Premium')
-   * .randomWithPath();
-   *
-   * // item = { type: 'Premium', ... }
-   * // path = "items[2]"
-   * ```
-   *
-   * @example Grouped array query
-   * ```ts
-   * const [item, path] = query(resp)
-   * .objectGroups('sections')
-   * .exclude(['archived', 'pending'])
-   * .arrays('items')
-   * .where('type')
-   * .equals('Premium')
-   * .randomWithPath();
-   *
-   * // item = { type: 'Premium', ... }
-   * // path = "sections.active.items[2]"
-   * ```
-   *
-   * @throws Error if no matches are found.
+   * Returns a random match with its full path as a tuple.
    */
   randomWithPath(): [TItem, string] {
-    const results = this.all();
+    if (this.items === undefined) {
+      throw new Error("randomWithPath() is only available on bound queries.");
+    }
+    const results = this._executeFilter();
     if (results.length === 0) {
       throw new Error("No matches found for randomWithPath().");
     }
     const randomIndex = Math.floor(Math.random() * results.length);
     const item = results[randomIndex];
 
-    // Simple case: direct array query (from query().array())
     if (
       !this.metadata?.groupsRootPath &&
       this.metadata?.arrayPath &&
       !this.metadata?.itemMetadata
     ) {
-      const unfiltered = this.items;
+      const unfiltered = this.items!;
       const unfilteredIndex = unfiltered.indexOf(item);
       const path =
         unfilteredIndex !== -1
@@ -1503,13 +908,12 @@ export class ArrayQuery<TItem> {
       return [item, path];
     }
 
-    // Complex case: grouped array query (from query().objectGroups().arrays())
     if (
       this.metadata?.groupsRootPath &&
       this.metadata?.arrayPath &&
       this.metadata?.itemMetadata
     ) {
-      const unfiltered = this.items;
+      const unfiltered = this.items!;
       const unfilteredIndex = unfiltered.indexOf(item);
       if (unfilteredIndex === -1) {
         return [item, `[${randomIndex}]`];
@@ -1524,65 +928,63 @@ export class ArrayQuery<TItem> {
       return [item, path];
     }
 
-    // Fallback: no path info available
     return [item, `[${randomIndex}]`];
   }
 
   /**
-   * Returns the last match.
-   *
-   * @throws Error if no matches are found.
+   * Returns the last match. Throws if no matches.
    */
-  last(): TItem {
-    const results = this.all();
+  last(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("last") as any;
+    }
+    const results = this._executeFilter();
     if (results.length === 0) {
       throw new Error("No matches found for last().");
     }
-    return results[results.length - 1];
+    return results[results.length - 1] as any;
   }
 
   /**
-   * Returns the nth match (by index in filtered results).
-   *
-   * @param index - Zero-based index of the item to return
-   * @returns The item at the given index
-   * @throws Error if index is out of bounds
+   * Returns the nth match by index.
    */
-  nth(index: number): TItem {
-    const results = this.all();
+  nth(
+    index: number,
+  ): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("nth", index) as any;
+    }
+    const results = this._executeFilter();
     if (index < 0 || index >= results.length) {
       throw new Error(
         `Index ${index} out of bounds. Found ${results.length} matches.`,
       );
     }
-    return results[index];
+    return results[index] as any;
   }
 
   /**
    * @internal
-   * Helper to build the path for a given filtered item by its index.
    */
   private _buildPathForItem(item: TItem, filteredIndex: number): string {
-    // Simple case: direct array query (from query().array())
     if (
       !this.metadata?.groupsRootPath &&
       this.metadata?.arrayPath &&
       !this.metadata?.itemMetadata
     ) {
-      const unfiltered = this.items;
+      const unfiltered = this.items!;
       const unfilteredIndex = unfiltered.indexOf(item);
       return unfilteredIndex !== -1
         ? `${this.metadata.arrayPath}[${unfilteredIndex}]`
         : `${this.metadata.arrayPath}[${filteredIndex}]`;
     }
 
-    // Complex case: grouped array query (from query().objectGroups().arrays())
     if (
       this.metadata?.groupsRootPath &&
       this.metadata?.arrayPath &&
       this.metadata?.itemMetadata
     ) {
-      const unfiltered = this.items;
+      const unfiltered = this.items!;
       const unfilteredIndex = unfiltered.indexOf(item);
       if (unfilteredIndex === -1) {
         return `[${filteredIndex}]`;
@@ -1596,62 +998,17 @@ export class ArrayQuery<TItem> {
       return `${this.metadata.groupsRootPath}.${itemMeta.groupKey}.${this.metadata.arrayPath}[${itemMeta.itemIndex}]`;
     }
 
-    // Fallback: no path info available
     return `[${filteredIndex}]`;
   }
 
   /**
    * Returns a chainable path query helper.
-   *
-   * @example Get all matching paths
-   * ```ts
-   * const paths = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .path()
-   *   .all(); // ["items[0]", "items[3]", "items[5]"]
-   * ```
-   *
-   * @example Get first matching path
-   * ```ts
-   * const firstPath = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .path()
-   *   .first(); // "items[0]"
-   * ```
-   *
-   * @example Get last matching path
-   * ```ts
-   * const lastPath = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .path()
-   *   .last(); // "items[5]"
-   * ```
-   *
-   * @example Get random matching path
-   * ```ts
-   * const randomPath = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .path()
-   *   .random(); // "items[3]"
-   * ```
-   *
-   * @example Get nth matching path (by index in filtered results)
-   * ```ts
-   * const secondPath = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .path()
-   *   .nth(1); // "items[3]" (2nd matching item)
-   * ```
-   *
-   * @returns A {@link PathQuery} helper for chainable path operations
    */
   path(): PathQuery {
-    const results = this.all();
+    if (this.items === undefined) {
+      throw new Error("path() is only available on bound queries.");
+    }
+    const results = this._executeFilter();
     const paths = results.map((item, index) =>
       this._buildPathForItem(item, index),
     );
@@ -1660,347 +1017,399 @@ export class ArrayQuery<TItem> {
 
   /**
    * Requires exactly one match.
-   *
-   * @param message - Optional custom error message
-   * @returns The single matching item
-   * @throws Error if zero or more than one items match
    */
-  one(message?: string): TItem {
-    const results = this.all();
+  one(
+    message?: string,
+  ): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("one", message) as any;
+    }
+    const results = this._executeFilter();
     if (results.length !== 1) {
       throw new Error(
         message ?? `Expected exactly 1 match, found ${results.length}.`,
       );
     }
-    return results[0];
+    return results[0] as any;
   }
 
   /**
-   * Returns indices of all matching items as a chainable helper.
-   * Use `.all()`, `.first()`, `.random()`, or `.one()` to get the result.
-   *
-   * @example Get all matching indices
-   * ```ts
-   * const indices = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .index()
-   *   .all(); // [0, 3, 5]
-   * ```
-   *
-   * @example Get first matching index
-   * ```ts
-   * const firstIdx = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .index()
-   *   .first(); // 0
-   * ```
-   *
-   * @example Get random matching index
-   * ```ts
-   * const randomIdx = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .index()
-   *   .random(); // 3
-   * ```
-   *
-   * @example Get exactly one matching index (throws if not exactly 1 match)
-   * ```ts
-   * const singleIdx = query(resp)
-   *   .array('items')
-   *   .filter("id == 123")
-   *   .index()
-   *   .one(); // 7
-   * ```
-   *
-   * @returns An IndexQuery helper for chainable index operations.
+   * Returns indices of all matching items.
    */
   index(): IndexQuery {
-    const matchingIndices = this.all().map((item) => this.items.indexOf(item));
+    if (this.items === undefined) {
+      throw new Error("index() is only available on bound queries.");
+    }
+    const matchingIndices = this._executeFilter().map((item) =>
+      this.items!.indexOf(item),
+    );
     return new IndexQuery(matchingIndices);
   }
 
   /**
    * Returns all matching items with their original array indices.
-   * Result format: [[index, item], [index, item], ...]
-   *
-   * @example
-   * ```ts
-   * const itemsWithIdx = query(resp)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .allWithIndex();
-   *
-   * // Result: [[0, {id: 1, type: 'Premium'}], [3, {id: 4, type: 'Premium'}]]
-   * ```
-   *
-   * @returns Array of [index, item] tuples for all matches.
    */
   allWithIndex(): Array<[number, TItem]> {
-    return this.all().map((item) => [this.items.indexOf(item), item]);
+    if (this.items === undefined) {
+      throw new Error("allWithIndex() is only available on bound queries.");
+    }
+    return this._executeFilter().map((item) => [
+      this.items!.indexOf(item),
+      item,
+    ]);
   }
 
-  // ---------------------------------------------------------------------------
-  // Map family
-  // ---------------------------------------------------------------------------
+  // ── Map family ─────────────────────────────────────────────────────────
 
   /**
-   * Applies `fn` to each item in the (filtered) array and returns a new
-   * `ArrayQuery` over the results.  The returned query starts with no
-   * clauses, so subsequent `.where()` calls filter the *mapped* output.
-   *
-   * @example
-   * ```ts
-   * const names = query(data)
-   *   .array('items')
-   *   .where('type').equals('Premium')
-   *   .map(item => item.name.toUpperCase())
-   *   .all();
-   * ```
+   * Applies fn to each item, returns a new ArrayQuery over the results.
    */
-  map<TOut>(fn: (item: TItem) => TOut): ArrayQuery<TOut> {
-    return new ArrayQuery<TOut>(this.all().map(fn));
+  map<TOut>(fn: (item: TItem) => TOut): ArrayQuery<TOut, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<TOut>("map", fn);
+    }
+    const mapped = this._executeFilter().map(fn);
+    return ArrayQuery._bound<TOut>(mapped) as any;
   }
 
   /**
-   * Extracts two path values from each item, applies `fn` to the pair,
-   * and returns a new `ArrayQuery` over the results.
+   * Extracts two paths per item, applies fn.
    */
   map2<TOut>(
     path1: string,
     path2: string,
     fn: (a: any, b: any) => TOut,
-  ): ArrayQuery<TOut> {
-    const mapped = this.all().map((item) =>
+  ): ArrayQuery<TOut, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<TOut>("map2", path1, path2, fn);
+    }
+    const mapped = this._executeFilter().map((item) =>
       fn(getByPath(item as any, path1), getByPath(item as any, path2)),
     );
-    return new ArrayQuery<TOut>(mapped);
+    return ArrayQuery._bound<TOut>(mapped) as any;
   }
 
   /**
-   * Extracts N path values from each item, applies `fn` to the tuple,
-   * and returns a new `ArrayQuery` over the results.
+   * Extracts N paths per item, applies fn.
    */
-  mapn<TOut>(paths: string[], fn: (...values: any[]) => TOut): ArrayQuery<TOut> {
-    const mapped = this.all().map((item) => {
+  mapn<TOut>(
+    paths: string[],
+    fn: (...values: any[]) => TOut,
+  ): ArrayQuery<TOut, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<TOut>("mapn", paths, fn);
+    }
+    const mapped = this._executeFilter().map((item) => {
       const values = paths.map((p) => getByPath(item as any, p));
       return fn(...values);
     });
-    return new ArrayQuery<TOut>(mapped);
+    return ArrayQuery._bound<TOut>(mapped) as any;
   }
 
-  // ---------------------------------------------------------------------------
-  // Reduce / Fold family (terminal – returns scalar)
-  // ---------------------------------------------------------------------------
+  // ── Reduce / Fold family ───────────────────────────────────────────────
 
   /**
-   * Left-fold (reduce) the filtered items into a single value.
-   *
-   * @example
-   * ```ts
-   * const total = query(data)
-   *   .array('items')
-   *   .reduce((acc, item) => acc + item.price, 0);
-   * ```
+   * Left-fold items into a single value.
    */
-  reduce<TAcc>(fn: (acc: TAcc, item: TItem) => TAcc, init: TAcc): TAcc {
-    return this.all().reduce(fn, init);
+  reduce<TAcc>(
+    fn: (acc: TAcc, item: TItem) => TAcc,
+    init: TAcc,
+  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("reduce", fn, init) as any;
+    }
+    return this._executeFilter().reduce(fn, init) as any;
   }
 
   /**
-   * Fold with two path values extracted per item.
+   * Fold with two extracted path values.
    */
   reduce2<TAcc>(
     path1: string,
     path2: string,
     fn: (acc: TAcc, a: any, b: any) => TAcc,
     init: TAcc,
-  ): TAcc {
-    return this.all().reduce(
+  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("reduce2", path1, path2, fn, init) as any;
+    }
+    return this._executeFilter().reduce(
       (acc, item) =>
         fn(acc, getByPath(item as any, path1), getByPath(item as any, path2)),
       init,
-    );
+    ) as any;
   }
 
   /**
-   * Fold with N path values extracted per item.
+   * Fold with N extracted path values.
    */
   reducen<TAcc>(
     paths: string[],
     fn: (acc: TAcc, ...values: any[]) => TAcc,
     init: TAcc,
-  ): TAcc {
-    return this.all().reduce((acc, item) => {
+  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("reducen", paths, fn, init) as any;
+    }
+    return this._executeFilter().reduce((acc, item) => {
       const values = paths.map((p) => getByPath(item as any, p));
       return fn(acc, ...values);
-    }, init);
+    }, init) as any;
   }
 
-  /** Alias for {@link reduce}. */
-  fold<TAcc>(fn: (acc: TAcc, item: TItem) => TAcc, init: TAcc): TAcc {
+  /** Alias for reduce. */
+  fold<TAcc>(
+    fn: (acc: TAcc, item: TItem) => TAcc,
+    init: TAcc,
+  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
     return this.reduce(fn, init);
   }
 
-  /** Alias for {@link reduce2}. */
+  /** Alias for reduce2. */
   fold2<TAcc>(
     path1: string,
     path2: string,
     fn: (acc: TAcc, a: any, b: any) => TAcc,
     init: TAcc,
-  ): TAcc {
+  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
     return this.reduce2(path1, path2, fn, init);
   }
 
-  /** Alias for {@link reducen}. */
+  /** Alias for reducen. */
   foldn<TAcc>(
     paths: string[],
     fn: (acc: TAcc, ...values: any[]) => TAcc,
     init: TAcc,
-  ): TAcc {
+  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
     return this.reducen(paths, fn, init);
   }
 
-  // ---------------------------------------------------------------------------
-  // Core composable primitives
-  // ---------------------------------------------------------------------------
+  // ── Core composable primitives ─────────────────────────────────────────
 
   /**
-   * Maps each item to zero or more results, then flattens into a single array.
-   *
-   * @example
-   * ```ts
-   * const allTags = query(data)
-   *   .array('items')
-   *   .flatMap(item => item.tags)
-   *   .all();
-   * ```
+   * Maps each item to zero or more results, then flattens.
    */
-  flatMap<TOut>(fn: (item: TItem) => TOut[]): ArrayQuery<TOut> {
+  flatMap<TOut>(fn: (item: TItem) => TOut[]): ArrayQuery<TOut, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<TOut>("flatMap", fn);
+    }
     const result: TOut[] = [];
-    for (const item of this.all()) {
+    for (const item of this._executeFilter()) {
       result.push(...fn(item));
     }
-    return new ArrayQuery<TOut>(result);
+    return ArrayQuery._bound<TOut>(result) as any;
   }
 
   /**
    * Like reduce but returns all intermediate accumulator values.
-   * Output length is `n + 1` (includes `init`), following Haskell `scanl'`.
-   *
-   * @example
-   * ```ts
-   * const running = query(data)
-   *   .array('items')
-   *   .scan((acc, item) => acc + item.price, 0)
-   *   .all();
-   * // => [0, 100, 150, 300, 375]
-   * ```
+   * Output length is n+1 (includes init).
    */
-  scan<TAcc>(fn: (acc: TAcc, item: TItem) => TAcc, init: TAcc): ArrayQuery<TAcc> {
-    const items = this.all();
+  scan<TAcc>(
+    fn: (acc: TAcc, item: TItem) => TAcc,
+    init: TAcc,
+  ): ArrayQuery<TAcc, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<TAcc>("scan", fn, init);
+    }
+    const items = this._executeFilter();
     const result: TAcc[] = [init];
     let acc = init;
     for (const item of items) {
       acc = fn(acc, item);
       result.push(acc);
     }
-    return new ArrayQuery<TAcc>(result);
+    return ArrayQuery._bound<TAcc>(result) as any;
   }
 
   /**
-   * Returns the first `n` items from the filtered results.
-   * If `n >= length`, returns all items.  If `n <= 0`, returns empty.
+   * Returns the first n items from filtered results.
    */
-  take(n: number): ArrayQuery<TItem> {
-    return new ArrayQuery<TItem>(this.all().slice(0, n));
+  take(n: number): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("take", n);
+    }
+    return ArrayQuery._bound<TItem>(this._executeFilter().slice(0, n)) as any;
   }
 
   /**
-   * Skips the first `n` items from the filtered results.
-   * If `n >= length`, returns empty.  If `n <= 0`, returns all items.
+   * Skips the first n items from filtered results.
    */
-  drop(n: number): ArrayQuery<TItem> {
-    return new ArrayQuery<TItem>(this.all().slice(n));
+  drop(n: number): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("drop", n);
+    }
+    return ArrayQuery._bound<TItem>(this._executeFilter().slice(n)) as any;
   }
 
   /**
-   * Returns the longest prefix of items satisfying the predicate.
+   * Returns the longest prefix satisfying predicate.
    */
-  takeWhile(fn: (item: TItem) => boolean): ArrayQuery<TItem> {
-    const items = this.all();
+  takeWhile(fn: (item: TItem) => boolean): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("takeWhile", fn);
+    }
+    const items = this._executeFilter();
     const result: TItem[] = [];
     for (const item of items) {
       if (!fn(item)) break;
       result.push(item);
     }
-    return new ArrayQuery<TItem>(result);
+    return ArrayQuery._bound<TItem>(result) as any;
   }
 
   /**
-   * Drops the longest prefix of items satisfying the predicate,
-   * then returns the remainder.
+   * Drops prefix satisfying predicate, returns remainder.
    */
-  dropWhile(fn: (item: TItem) => boolean): ArrayQuery<TItem> {
-    const items = this.all();
+  dropWhile(fn: (item: TItem) => boolean): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("dropWhile", fn);
+    }
+    const items = this._executeFilter();
     let i = 0;
     while (i < items.length && fn(items[i])) i++;
-    return new ArrayQuery<TItem>(items.slice(i));
+    return ArrayQuery._bound<TItem>(items.slice(i)) as any;
   }
 
   /**
-   * Splits the filtered items into two groups: those satisfying the
-   * predicate and those that do not.
-   *
-   * @returns `[matching, nonMatching]` as a tuple of `ArrayQuery` instances.
+   * Splits into [matching, nonMatching]. Bound-only.
    */
   partition(
     fn: (item: TItem) => boolean,
-  ): [ArrayQuery<TItem>, ArrayQuery<TItem>] {
+  ): [ArrayQuery<TItem, "bound">, ArrayQuery<TItem, "bound">] {
+    if (this.items === undefined) {
+      throw new Error("partition() is only available on bound queries.");
+    }
     const yes: TItem[] = [];
     const no: TItem[] = [];
-    for (const item of this.all()) {
+    for (const item of this._executeFilter()) {
       (fn(item) ? yes : no).push(item);
     }
-    return [new ArrayQuery<TItem>(yes), new ArrayQuery<TItem>(no)];
+    return [ArrayQuery._bound<TItem>(yes), ArrayQuery._bound<TItem>(no)];
   }
 
   /**
-   * Pairs each item from this array with the corresponding item from
-   * `other`.  The result length equals the shorter of the two arrays.
+   * Pairs items with external array. Length = min of both.
    */
-  zip<TOther>(other: TOther[]): ArrayQuery<[TItem, TOther]> {
-    const items = this.all();
+  zip<TOther>(other: TOther[]): ArrayQuery<[TItem, TOther], TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<[TItem, TOther]>("zip", other);
+    }
+    const items = this._executeFilter();
     const len = Math.min(items.length, other.length);
     const result: [TItem, TOther][] = [];
     for (let i = 0; i < len; i++) {
       result.push([items[i], other[i]]);
     }
-    return new ArrayQuery<[TItem, TOther]>(result);
+    return ArrayQuery._bound<[TItem, TOther]>(result) as any;
   }
 
   /**
-   * Combines each item from this array with the corresponding item from
-   * `other` using `fn`.  The result length equals the shorter of the two.
+   * Combines items with external array using fn. Length = min of both.
    */
   zipWith<TOther, TOut>(
     other: TOther[],
     fn: (a: TItem, b: TOther) => TOut,
-  ): ArrayQuery<TOut> {
-    const items = this.all();
+  ): ArrayQuery<TOut, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<TOut>("zipWith", other, fn);
+    }
+    const items = this._executeFilter();
     const len = Math.min(items.length, other.length);
     const result: TOut[] = [];
     for (let i = 0; i < len; i++) {
       result.push(fn(items[i], other[i]));
     }
-    return new ArrayQuery<TOut>(result);
+    return ArrayQuery._bound<TOut>(result) as any;
   }
 
-  /** @internal Used by {@link WhereBuilder} to append a clause. */
-  _pushClause(clause: any): this {
-    this.clauses.push(clause);
-    return this;
+  // ── Recipe extraction ──────────────────────────────────────────────────
+
+  /**
+   * Extracts a reusable pipeline (unbound ArrayQuery) from this chain.
+   *
+   * @param stripTerminal - If true, removes the last step (the terminal)
+   *   so the caller can pick a different terminal at deploy time.
+   */
+  toRecipe(stripTerminal?: boolean): ArrayQuery<TItem, "unbound"> {
+    const steps =
+      stripTerminal && this.steps.length > 0
+        ? this.steps.slice(0, -1)
+        : [...this.steps];
+    return ArrayQuery._fromSteps<TItem>(steps, this._arrayPath);
+  }
+
+  // ── Pipeline execution ─────────────────────────────────────────────────
+
+  /**
+   * Executes a pipeline against data, or applies a recipe to this query.
+   *
+   * On unbound (pipeline): supply data as input.
+   *   - If arrayPath is set, extracts array from input object.
+   *   - If arrayPath is undefined, input is TItem[] directly.
+   *
+   * On bound (query): supply a recipe (unbound ArrayQuery) to apply.
+   */
+  run(input: any): ArrayQuery<any, "bound"> {
+    if (this.items === undefined) {
+      // Unbound: input is data
+      let items: any[];
+      if (this._arrayPath !== undefined) {
+        items = getByPath(input, this._arrayPath);
+        if (!Array.isArray(items)) {
+          throw new Error(
+            `Expected array at path "${this._arrayPath}", got ${typeof items}.`,
+          );
+        }
+      } else {
+        items = input;
+      }
+      return ArrayQuery._replay(items, this.steps);
+    } else {
+      // Bound: input is a recipe
+      const recipe = input as ArrayQuery<any, "unbound">;
+      return ArrayQuery._replay(this._executeFilter(), recipe._getSteps());
+    }
+  }
+
+  // ── Internal clause management ─────────────────────────────────────────
+
+  /** @internal Used by WhereBuilder to append a clause. */
+  _pushClause(clause: any): ArrayQuery<TItem, TMode> {
+    const newSteps = [...this.steps, { method: "_pushClause", args: [clause] }];
+    const newClauses =
+      this.items !== undefined
+        ? [...this.clauses, clause]
+        : this.clauses;
+    return new ArrayQuery<TItem, TMode>(
+      this.items,
+      newSteps,
+      newClauses,
+      this._arrayPath,
+      this.metadata,
+      this._sortPath,
+      this._sortDirection,
+    );
   }
 }
+
+// ── Factory function ───────────────────────────────────────────────────
+
+/**
+ * Creates an empty reusable pipeline (no data, no terminals until .run()).
+ *
+ * ```typescript
+ * const pipeline = arrayPipeline<Item>()
+ *   .where('type').equals('Premium')
+ *   .sort('price', 'desc')
+ *   .take(3);
+ *
+ * pipeline.run(datasetA).all();
+ * pipeline.run(datasetB).first();
+ * ```
+ */
+export function arrayPipeline<TItem>(): ArrayQuery<TItem, "unbound"> {
+  return ArrayQuery._unbound<TItem>();
+}
+
+// ── Register circular reference for QueryResult ────────────────────────
+_setArrayQueryRef(ArrayQuery);

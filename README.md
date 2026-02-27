@@ -13,7 +13,8 @@ A fluent, type-safe query builder for JSON data with MongoDB-style filters. Perf
 - 💯 **Decimal Precision** - Handle floating point comparisons correctly
 - 🔄 **Map/Reduce** - General-purpose transform and fold with map, reduce, flatMap, scan
 - ✂️ **Composable Primitives** - take, drop, takeWhile, dropWhile, partition, zip, zipWith
-- 🧩 **Assignable Lazy Chains** - Define a query once, run it on any dataset with `arrayPipeline()`
+- 🧩 **Reusable Pipelines** - Define a query once, run it on any dataset with `arrayPipeline()`
+- 🔁 **Recipe Extraction** - Extract reusable pipelines from bound chains or results via `.toRecipe()`
 
 ## Installation
 
@@ -317,28 +318,15 @@ const scored = query(data)
   .all();
 ```
 
-### Assignable Lazy Chains (arrayPipeline)
+### Reusable Pipelines (arrayPipeline)
 
 The standard `query(data).array(path)` approach binds data at construction
-time. This works well when data is available immediately, but sometimes you
-want to define a query chain once and apply it to different arrays later --
-for example, when the same filtering logic runs against paginated API
-responses, test fixtures, or multiple data sources.
+time. When you want to define a query chain once and apply it to different
+arrays later, use `arrayPipeline<T>()`.
 
-`arrayPipeline<T>()` separates *what* to do from *what data* to do it on.
-It produces an `ArrayPipeline` -- a pure description of operations with no
-data attached. The pipeline only executes when you call `.run(items)`, which
-supplies the data and returns a resolved `ArrayQuery`.
-
-This is an intentional two-type design:
-
-| Type | Has data? | Has terminals (.all, .count, ...)? |
-|---|---|---|
-| `ArrayPipeline<T>` | No | No -- only chainable operations |
-| `ArrayQuery<T>` (from `.run()`) | Yes | Yes -- all terminals available |
-
-`.run()` is the bridge between the two. It cannot be implicit because the
-pipeline does not know which array to operate on until you tell it.
+`arrayPipeline<T>()` returns an unbound `ArrayQuery` — a pure description of
+operations with no data attached. The pipeline only executes when you call
+`.run(items)`, which supplies the data and returns a bound `ArrayQuery`.
 
 ```typescript
 import { arrayPipeline } from "fluent-query";
@@ -353,9 +341,6 @@ interface Product {
 **Building a pipeline (no data, no execution):**
 
 ```typescript
-// This records operations but does not execute anything.
-// No .all(), .first(), .count() etc. are available here --
-// the pipeline has no data to query against.
 const cheapPremiums = arrayPipeline<Product>()
   .where("type")
   .equals("Premium")
@@ -363,11 +348,9 @@ const cheapPremiums = arrayPipeline<Product>()
   .take(3);
 ```
 
-**Resolving with `.run()` (data in, ArrayQuery out):**
+**Resolving with `.run()` (data in, bound query out):**
 
 ```typescript
-// .run() binds data and returns an ArrayQuery.
-// Now all terminal methods are available.
 const fromWarehouse = cheapPremiums.run(warehouseProducts).all();
 const fromStore = cheapPremiums.run(storeProducts).first();
 const totalValue = cheapPremiums.run(allProducts).sum("price");
@@ -398,8 +381,8 @@ const result2 = pipe.run(dataB.products).all(); // reuse on dataset B
 
 **Branching from a shared base:**
 
-Pipelines are immutable -- each chained call returns a new pipeline instance,
-so you can branch freely without one branch affecting another.
+Pipelines are immutable — each chained call returns a new instance, so you
+can branch freely without one branch affecting another.
 
 ```typescript
 const premiums = arrayPipeline<Product>().where("type").equals("Premium");
@@ -416,8 +399,7 @@ premiums.run(products).count(); // base pipeline is unaffected
 
 **Type-changing transforms:**
 
-Transforms like `.map()` produce a new pipeline with an updated element type,
-mirroring how `ArrayQuery.map()` returns a new `ArrayQuery<TOut>`.
+Transforms like `.map()` produce a new pipeline with an updated element type.
 
 ```typescript
 const labels = arrayPipeline<Product>()
@@ -425,26 +407,86 @@ const labels = arrayPipeline<Product>()
   .equals("Premium")
   .map((p) => ({ label: p.name, cost: p.price }));
 
-// labels is ArrayPipeline<{ label: string; cost: number }>
+// labels is ArrayQuery<{ label: string; cost: number }, 'unbound'>
 labels.run(products).all();
 // => [{ label: 'Widget', cost: 500 }, ...]
 ```
 
-**Where chains with modifiers:**
+### Recipes and QueryResult
+
+Bound queries and their results carry the full chain of operations, which
+can be extracted as a reusable recipe via `.toRecipe()`.
+
+**`.all()` returns a `QueryResult`:**
+
+`QueryResult<T>` extends `Array<T>` — it passes `Array.isArray()`, supports
+indexing, `.length`, `.map()`, spread, and `for..of`. It also exposes
+`.toRecipe()` for extracting the pipeline that produced it.
 
 ```typescript
-const caseExact = arrayPipeline<Product>()
-  .where("name")
-  .caseSensitive()
-  .contains("Pro");
+const result = query(data)
+  .array("items")
+  .where("type")
+  .equals("Premium")
+  .all();
 
-const negated = arrayPipeline<Product>().whereNot("type").equals("Basic");
+Array.isArray(result); // true
+result.length; // 3
+result[0]; // first item
+[...result]; // spread into plain array
+```
 
-const priceRange = arrayPipeline<Product>()
-  .where("price")
-  .greaterThan(100)
-  .where("price")
-  .lessThanOrEqual(500);
+**Extracting recipes from bound chains:**
+
+```typescript
+// Extract a recipe from a bound chain (before terminal)
+const recipe = query(data)
+  .array("items")
+  .where("type")
+  .equals("Premium")
+  .toRecipe();
+
+// Replay on different data (recipe embeds the array path "items")
+const result = recipe.run(otherData).all();
+```
+
+**Extracting recipes from QueryResult:**
+
+```typescript
+const result = query(data).array("items").where("type").equals("Premium").all();
+
+// Strip the terminal (.all) so you can pick a different one
+const recipe = result.toRecipe(true);
+const count = recipe.run(otherData).count();
+const first = recipe.run(otherData).first();
+```
+
+**Applying recipes via `query().run()`:**
+
+When a recipe has an embedded array path (extracted from a bound chain), you
+can apply it directly to a root object:
+
+```typescript
+const recipe = query(data).array("items").where("type").equals("Premium").toRecipe();
+
+// Equivalent to query(newData).array("items").where("type").equals("Premium")
+query(newData).run(recipe).all();
+```
+
+**Applying a transform pipeline to bound results:**
+
+A pure pipeline (no embedded path) can be applied as a post-processing step
+on bound query results:
+
+```typescript
+const transform = arrayPipeline<Item>().sort("price", "desc").take(3);
+
+const top3 = query(data)
+  .array("items")
+  .where("type")
+  .equals("Premium")
+  .run(transform) // applies sort+take to the filtered results
+  .all();
 ```
 
 ## API Reference
@@ -528,20 +570,23 @@ const priceRange = arrayPipeline<Product>()
 - `.zip(other)` - Pair items with external array (truncates to shorter)
 - `.zipWith(other, fn)` - Combine items with external array using function
 
-### Pipeline Methods (`arrayPipeline`)
+### Pipeline and Recipe Methods
 
-`ArrayPipeline` exposes the same chainable operations as `ArrayQuery`, but
-records them lazily instead of executing. Call `.run(items)` to supply data
-and obtain a resolved `ArrayQuery` with all terminal methods.
+`arrayPipeline<T>()` returns an unbound `ArrayQuery` that records operations
+for later replay. Bound chains and `QueryResult` expose `.toRecipe()` for
+extracting pipelines from existing queries.
 
-- `arrayPipeline<T>()` - Create an empty reusable pipeline (no data, no terminals)
-- `.where(path)` / `.whereNot(path)` - Start a where-chain (returns `PipelineWhereBuilder`)
-- `.filter(expr)`, `.whereSift(query)`, `.whereIn(path, values)`, `.whereAll(criteria)` - Filtering
-- `.sort(path, direction?)`, `.take(n)`, `.drop(n)`, `.takeWhile(fn)`, `.dropWhile(fn)` - Ordering and slicing
-- `.map(fn)`, `.map2(p1, p2, fn)`, `.mapn(paths, fn)`, `.flatMap(fn)`, `.scan(fn, init)` - Type-changing transforms (return `ArrayPipeline<TOut>`)
-- `.zip(other)`, `.zipWith(other, fn)` - Combining
-- All `*IfPresent` variants - Conditional filtering
-- `.run(items)` - Bind data and resolve: returns `ArrayQuery<T>` with all terminals (`.all()`, `.first()`, `.count()`, etc.)
+- `arrayPipeline<T>()` - Create an empty reusable pipeline
+- `.run(items)` (on unbound) - Bind data and resolve: returns bound `ArrayQuery`
+- `.run(recipe)` (on bound) - Apply a pipeline as post-processing transform
+- `query(data).run(recipe)` - Apply a recipe with embedded path to a root object
+- `.toRecipe(stripTerminal?)` - Extract an unbound pipeline from a bound chain
+- `result.toRecipe(stripTerminal?)` - Extract a pipeline from a `QueryResult`
+
+All chainable methods (`.where()`, `.filter()`, `.sort()`, `.map()`, etc.)
+work identically on both bound and unbound queries. Terminal methods
+(`.all()`, `.count()`, `.first()`, etc.) execute eagerly on bound queries
+and record themselves as steps on unbound pipelines.
 
 ## Options
 
