@@ -11,6 +11,8 @@ A fluent, type-safe query builder for JSON data with MongoDB-style filters. Perf
 - 🎲 **Flexible Selection** - first, one, random, nth
 - 🔧 **Powerful Operators** - Filter expressions with and/or logic
 - 💯 **Decimal Precision** - Handle floating point comparisons correctly
+- 🔄 **Map/Reduce** - General-purpose transform and fold with map, reduce, flatMap, scan
+- ✂️ **Composable Primitives** - take, drop, takeWhile, dropWhile, partition, zip, zipWith
 
 ## Installation
 
@@ -144,6 +146,176 @@ const ids = query(data).array("users").pluck("id").all();
 const idsAsStrings = query(data).array("users").pluck("id").string().all();
 ```
 
+### Map / Transform
+
+```typescript
+// Transform each item
+const names = query(data)
+  .array("users")
+  .map((user) => user.name.toUpperCase())
+  .all();
+// => ['ALICE', 'BOB', 'CHARLIE']
+
+// map preserves chainability -- filter after transforming
+const expensiveLabels = query(data)
+  .array("products")
+  .map((p) => ({ label: p.name, cost: p.price * 1.1 }))
+  .where("cost")
+  .greaterThan(100)
+  .all();
+
+// Extract two paths and combine
+const labels = query(data)
+  .array("products")
+  .map2("name", "price", (name, price) => `${name}: $${price}`)
+  .all();
+
+// Extract N paths
+const rows = query(data)
+  .array("users")
+  .mapn(["id", "name", "city"], (id, name, city) => `${id},${name},${city}`)
+  .all();
+
+// flatMap -- expand each item into 0..N results, then flatten
+const allTags = query(data)
+  .array("posts")
+  .flatMap((post) => post.tags)
+  .all();
+```
+
+### Reduce / Fold
+
+`reduce` is the general form of aggregation -- the built-in `sum`, `count`,
+`min`, `max`, and `average` are all special cases:
+
+```typescript
+// sum(path)  ≡  reduce with +
+const total = query(data)
+  .array("orders")
+  .reduce((acc, order) => acc + order.amount, 0);
+
+// count()  ≡  reduce with +1
+const n = query(data)
+  .array("orders")
+  .reduce((acc, _item) => acc + 1, 0);
+
+// min(path)  ≡  reduce with Math.min
+const cheapest = query(data)
+  .array("products")
+  .reduce(
+    (min, p) => (min === null || p.price < min ? p.price : min),
+    null as number | null,
+  );
+
+// max(path)  ≡  reduce with Math.max
+const priciest = query(data)
+  .array("products")
+  .reduce(
+    (max, p) => (max === null || p.price > max ? p.price : max),
+    null as number | null,
+  );
+
+// average(path)  ≡  scan to get running sum, then divide
+const avg = query(data)
+  .array("items")
+  .reduce((acc, item) => ({ sum: acc.sum + item.price, n: acc.n + 1 }), {
+    sum: 0,
+    n: 0,
+  });
+// avg.sum / avg.n
+
+// fold is an alias for reduce
+const total2 = query(data)
+  .array("orders")
+  .fold((acc, order) => acc + order.amount, 0);
+
+// Fold with two extracted paths
+const weightedSum = query(data)
+  .array("items")
+  .reduce2("quantity", "unitPrice", (acc, qty, price) => acc + qty * price, 0);
+
+// Fold with N extracted paths
+const summary = query(data)
+  .array("items")
+  .reducen(
+    ["id", "name", "price"],
+    (acc, id, name, price) => {
+      acc.push(`#${id} ${name}: $${price}`);
+      return acc;
+    },
+    [],
+  );
+```
+
+### Scan (running accumulation)
+
+```typescript
+// Running total -- output length is n+1 (includes initial value)
+const runningTotal = query(data)
+  .array("transactions")
+  .scan((balance, tx) => balance + tx.amount, 0)
+  .all();
+// e.g. [0, 100, 250, 230, 380]
+```
+
+### Take / Drop / Slice
+
+```typescript
+// First 3 items (after filters)
+const top3 = query(data)
+  .array("items")
+  .where("status")
+  .equals("active")
+  .take(3)
+  .all();
+
+// Skip first 10
+const rest = query(data).array("items").drop(10).all();
+
+// Take while predicate holds
+const cheap = query(data)
+  .array("items")
+  .sort("price")
+  .takeWhile((item) => item.price < 100)
+  .all();
+
+// Drop while predicate holds
+const afterCheap = query(data)
+  .array("items")
+  .sort("price")
+  .dropWhile((item) => item.price < 100)
+  .all();
+```
+
+### Partition
+
+```typescript
+// Split into two groups
+const [active, inactive] = query(data)
+  .array("users")
+  .partition((user) => user.status === "active");
+
+active.all(); // all active users
+inactive.count(); // count of inactive users
+```
+
+### Zip / ZipWith
+
+```typescript
+// Pair items with an external array
+const paired = query(data)
+  .array("users")
+  .zip(["admin", "editor", "viewer"])
+  .all();
+// => [[user1, 'admin'], [user2, 'editor'], [user3, 'viewer']]
+
+// Combine with a function
+const scored = query(data)
+  .array("students")
+  .zipWith(grades, (student, grade) => ({ name: student.name, grade }))
+  .all();
+```
+
 ## API Reference
 
 ### Main Methods
@@ -194,6 +366,36 @@ const idsAsStrings = query(data).array("users").pluck("id").string().all();
 - `.max(path)` - Maximum value
 - `.distinct(path?)` - Unique items
 - `.groupBy(path)` - Group by property
+
+### Transform Methods
+
+- `.map(fn)` - Transform each item, returns chainable `ArrayQuery`
+- `.map2(path1, path2, fn)` - Extract two paths per item, apply binary function
+- `.mapn(paths, fn)` - Extract N paths per item, apply N-ary function
+- `.flatMap(fn)` - Map each item to an array, flatten results
+
+### Reduce / Fold Methods
+
+- `.reduce(fn, init)` - Left-fold items into a single value
+- `.fold(fn, init)` - Alias for `.reduce()`
+- `.reduce2(path1, path2, fn, init)` - Fold with two extracted path values
+- `.fold2(path1, path2, fn, init)` - Alias for `.reduce2()`
+- `.reducen(paths, fn, init)` - Fold with N extracted path values
+- `.foldn(paths, fn, init)` - Alias for `.reducen()`
+- `.scan(fn, init)` - Like reduce but returns all intermediate values (length n+1)
+
+### Sublist Methods
+
+- `.take(n)` - First n items from filtered results
+- `.drop(n)` - Skip first n items
+- `.takeWhile(fn)` - Longest prefix satisfying predicate
+- `.dropWhile(fn)` - Drop prefix satisfying predicate, return rest
+- `.partition(fn)` - Split into `[matching, nonMatching]` tuple of `ArrayQuery`
+
+### Combining Methods
+
+- `.zip(other)` - Pair items with external array (truncates to shorter)
+- `.zipWith(other, fn)` - Combine items with external array using function
 
 ## Options
 
