@@ -319,8 +319,26 @@ const scored = query(data)
 
 ### Assignable Lazy Chains (arrayPipeline)
 
-Define a query chain once and reuse it on different data sources. The pipeline
-records operations lazily and replays them onto any array via `.run(items)`.
+The standard `query(data).array(path)` approach binds data at construction
+time. This works well when data is available immediately, but sometimes you
+want to define a query chain once and apply it to different arrays later --
+for example, when the same filtering logic runs against paginated API
+responses, test fixtures, or multiple data sources.
+
+`arrayPipeline<T>()` separates *what* to do from *what data* to do it on.
+It produces an `ArrayPipeline` -- a pure description of operations with no
+data attached. The pipeline only executes when you call `.run(items)`, which
+supplies the data and returns a resolved `ArrayQuery`.
+
+This is an intentional two-type design:
+
+| Type | Has data? | Has terminals (.all, .count, ...)? |
+|---|---|---|
+| `ArrayPipeline<T>` | No | No -- only chainable operations |
+| `ArrayQuery<T>` (from `.run()`) | Yes | Yes -- all terminals available |
+
+`.run()` is the bridge between the two. It cannot be implicit because the
+pipeline does not know which array to operate on until you tell it.
 
 ```typescript
 import { arrayPipeline } from "fluent-query";
@@ -330,48 +348,76 @@ interface Product {
   type: string;
   price: number;
 }
+```
 
-// Define the pipeline once -- no data bound yet
+**Building a pipeline (no data, no execution):**
+
+```typescript
+// This records operations but does not execute anything.
+// No .all(), .first(), .count() etc. are available here --
+// the pipeline has no data to query against.
 const cheapPremiums = arrayPipeline<Product>()
   .where("type")
   .equals("Premium")
   .sort("price", "asc")
   .take(3);
-
-// Run on different datasets
-const fromWarehouse = cheapPremiums.run(warehouseProducts).all();
-const fromStore = cheapPremiums.run(storeProducts).all();
-const cheapestAnywhere = cheapPremiums.run(allProducts).first();
 ```
 
-Pipelines are immutable -- each chained call returns a new pipeline, so you
-can safely branch from a shared base:
+**Resolving with `.run()` (data in, ArrayQuery out):**
+
+```typescript
+// .run() binds data and returns an ArrayQuery.
+// Now all terminal methods are available.
+const fromWarehouse = cheapPremiums.run(warehouseProducts).all();
+const fromStore = cheapPremiums.run(storeProducts).first();
+const totalValue = cheapPremiums.run(allProducts).sum("price");
+```
+
+**Side-by-side comparison with `query()`:**
+
+```typescript
+// Standard approach: data bound at construction
+const result = query(data)
+  .array("products")
+  .where("type")
+  .equals("Premium")
+  .sort("price", "asc")
+  .take(3)
+  .all();
+
+// Pipeline approach: same chain, but data supplied separately
+const pipe = arrayPipeline<Product>()
+  .where("type")
+  .equals("Premium")
+  .sort("price", "asc")
+  .take(3);
+
+const result1 = pipe.run(dataA.products).all(); // reuse on dataset A
+const result2 = pipe.run(dataB.products).all(); // reuse on dataset B
+```
+
+**Branching from a shared base:**
+
+Pipelines are immutable -- each chained call returns a new pipeline instance,
+so you can branch freely without one branch affecting another.
 
 ```typescript
 const premiums = arrayPipeline<Product>().where("type").equals("Premium");
 
+// Two independent branches from the same base
 const cheapest = premiums.sort("price", "asc").take(5);
 const priciest = premiums.sort("price", "desc").take(5);
-const count = premiums.run(products).count();
+
+// Each branch resolves independently
+cheapest.run(products).all(); // 5 cheapest premiums
+priciest.run(products).all(); // 5 most expensive premiums
+premiums.run(products).count(); // base pipeline is unaffected
 ```
 
-`.run()` returns a full `ArrayQuery`, so all terminal methods are available:
+**Type-changing transforms:**
 
-```typescript
-const pipe = arrayPipeline<Product>()
-  .where("type")
-  .equals("Premium")
-  .sort("price", "desc");
-
-const aq = pipe.run(products);
-aq.all(); // all matching items
-aq.first(); // first match
-aq.count(); // count
-aq.sum("price"); // aggregate
-aq.pluck("name").all(); // extract values
-```
-
-Type-changing transforms produce a new pipeline with the output type:
+Transforms like `.map()` produce a new pipeline with an updated element type,
+mirroring how `ArrayQuery.map()` returns a new `ArrayQuery<TOut>`.
 
 ```typescript
 const labels = arrayPipeline<Product>()
@@ -379,11 +425,12 @@ const labels = arrayPipeline<Product>()
   .equals("Premium")
   .map((p) => ({ label: p.name, cost: p.price }));
 
+// labels is ArrayPipeline<{ label: string; cost: number }>
 labels.run(products).all();
 // => [{ label: 'Widget', cost: 500 }, ...]
 ```
 
-`where()` chains support all modifiers and terminals:
+**Where chains with modifiers:**
 
 ```typescript
 const caseExact = arrayPipeline<Product>()
@@ -483,14 +530,18 @@ const priceRange = arrayPipeline<Product>()
 
 ### Pipeline Methods (`arrayPipeline`)
 
-- `arrayPipeline<T>()` - Create an empty reusable pipeline
+`ArrayPipeline` exposes the same chainable operations as `ArrayQuery`, but
+records them lazily instead of executing. Call `.run(items)` to supply data
+and obtain a resolved `ArrayQuery` with all terminal methods.
+
+- `arrayPipeline<T>()` - Create an empty reusable pipeline (no data, no terminals)
 - `.where(path)` / `.whereNot(path)` - Start a where-chain (returns `PipelineWhereBuilder`)
 - `.filter(expr)`, `.whereSift(query)`, `.whereIn(path, values)`, `.whereAll(criteria)` - Filtering
 - `.sort(path, direction?)`, `.take(n)`, `.drop(n)`, `.takeWhile(fn)`, `.dropWhile(fn)` - Ordering and slicing
-- `.map(fn)`, `.map2(p1, p2, fn)`, `.mapn(paths, fn)`, `.flatMap(fn)`, `.scan(fn, init)` - Type-changing transforms
+- `.map(fn)`, `.map2(p1, p2, fn)`, `.mapn(paths, fn)`, `.flatMap(fn)`, `.scan(fn, init)` - Type-changing transforms (return `ArrayPipeline<TOut>`)
 - `.zip(other)`, `.zipWith(other, fn)` - Combining
 - All `*IfPresent` variants - Conditional filtering
-- `.run(items)` - Replay the pipeline onto an array, returns `ArrayQuery`
+- `.run(items)` - Bind data and resolve: returns `ArrayQuery<T>` with all terminals (`.all()`, `.first()`, `.count()`, etc.)
 
 ## Options
 
