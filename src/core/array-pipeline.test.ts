@@ -52,10 +52,10 @@ describe("arrayPipeline (unbound mode)", () => {
   });
 
   describe("where() with modifiers", () => {
-    it("applies caseSensitive modifier", () => {
+    it("applies ignoreCase(false) modifier", () => {
       const pipe = arrayPipeline<Item>()
         .where("type")
-        .caseSensitive()
+        .ignoreCase(false)
         .equals("premium");
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(0);
@@ -177,23 +177,23 @@ describe("arrayPipeline (unbound mode)", () => {
     });
   });
 
-  describe("whereIfPresent with null", () => {
+  describe("whereIfDefined with null", () => {
     it("skips the filter when value is null", () => {
-      const pipe = arrayPipeline<Item>().whereIfPresent("type", null);
+      const pipe = arrayPipeline<Item>().whereIfDefined("type", null);
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(5);
     });
 
     it("applies the filter when value is provided", () => {
-      const pipe = arrayPipeline<Item>().whereIfPresent("type", "Premium");
+      const pipe = arrayPipeline<Item>().whereIfDefined("type", "Premium");
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(3);
     });
   });
 
-  describe("whereNotIfPresent with null", () => {
+  describe("whereNotIfDefined with null", () => {
     it("skips the filter when value is null", () => {
-      const pipe = arrayPipeline<Item>().whereNotIfPresent("type", null);
+      const pipe = arrayPipeline<Item>().whereNotIfDefined("type", null);
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(5);
     });
@@ -289,28 +289,69 @@ describe("arrayPipeline (unbound mode)", () => {
     });
   });
 
-  describe("filterIfPresent", () => {
-    it("skips filter when expression is null", () => {
-      const pipe = arrayPipeline<Item>().filterIfPresent(null);
+  describe("filterIfDefined", () => {
+    it("skips filter when param is undefined", () => {
+      const pipe = arrayPipeline<Item>().filterIfDefined(
+        "price > 100",
+        undefined,
+      );
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(5);
     });
 
-    it("applies filter when expression is provided", () => {
-      const pipe = arrayPipeline<Item>().filterIfPresent("price > 100");
+    it("applies filter when param is defined", () => {
+      const pipe = arrayPipeline<Item>().filterIfDefined("price > 100", 100);
       const result = pipe.run(datasetA).all();
       expect(result.every((i) => i.price > 100)).toBe(true);
     });
+
+    it("supports logical operators the same as filter", () => {
+      const pipe = arrayPipeline<Item>().filterIfDefined(
+        "type == 'Premium' and price > 100",
+        true,
+      );
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(3);
+    });
+
+    it("supports substring values like 'orange'", () => {
+      const pipe = arrayPipeline<Item>().filterIfDefined(
+        "name contains orange",
+        true,
+      );
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(0);
+    });
   });
 
-  describe("greaterThanIfPresent / lessThanIfPresent", () => {
+  describe("filterIfAllDefined", () => {
+    it("applies filter only when all params are defined", () => {
+      const pipe = arrayPipeline<Item>().filterIfAllDefined("price > 100", [
+        1,
+        "x",
+      ]);
+      const result = pipe.run(datasetA).all();
+      expect(result.every((i) => i.price > 100)).toBe(true);
+    });
+
+    it("skips filter when any param is undefined", () => {
+      const pipe = arrayPipeline<Item>().filterIfAllDefined("price > 100", [
+        1,
+        undefined,
+      ]);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(5);
+    });
+  });
+
+  describe("greaterThanIfDefined / lessThanIfDefined", () => {
     it("skips when null", () => {
-      const pipe = arrayPipeline<Item>().greaterThanIfPresent("price", null);
+      const pipe = arrayPipeline<Item>().greaterThanIfDefined("price", null);
       expect(pipe.run(datasetA).count()).toBe(5);
     });
 
     it("applies when value given", () => {
-      const pipe = arrayPipeline<Item>().greaterThanIfPresent("price", 200);
+      const pipe = arrayPipeline<Item>().greaterThanIfDefined("price", 200);
       expect(pipe.run(datasetA).count()).toBe(2);
     });
   });
@@ -391,24 +432,24 @@ describe("arrayPipeline (unbound mode)", () => {
     });
   });
 
-  describe("containsIfPresent / startsWithIfPresent / endsWithIfPresent", () => {
-    it("skips containsIfPresent when null", () => {
-      const pipe = arrayPipeline<Item>().containsIfPresent("name", null);
+  describe("containsIfDefined / startsWithIfDefined / endsWithIfDefined", () => {
+    it("skips containsIfDefined when null", () => {
+      const pipe = arrayPipeline<Item>().containsIfDefined("name", null);
       expect(pipe.run(datasetA).count()).toBe(5);
     });
 
-    it("applies containsIfPresent when value given", () => {
-      const pipe = arrayPipeline<Item>().containsIfPresent("name", "lph");
+    it("applies containsIfDefined when value given", () => {
+      const pipe = arrayPipeline<Item>().containsIfDefined("name", "lph");
       expect(pipe.run(datasetA).count()).toBe(1);
     });
 
-    it("skips startsWithIfPresent when null", () => {
-      const pipe = arrayPipeline<Item>().startsWithIfPresent("name", null);
+    it("skips startsWithIfDefined when null", () => {
+      const pipe = arrayPipeline<Item>().startsWithIfDefined("name", null);
       expect(pipe.run(datasetA).count()).toBe(5);
     });
 
-    it("skips endsWithIfPresent when null", () => {
-      const pipe = arrayPipeline<Item>().endsWithIfPresent("name", null);
+    it("skips endsWithIfDefined when null", () => {
+      const pipe = arrayPipeline<Item>().endsWithIfDefined("name", null);
       expect(pipe.run(datasetA).count()).toBe(5);
     });
   });

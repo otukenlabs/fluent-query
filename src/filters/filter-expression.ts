@@ -72,9 +72,9 @@ export function expressionToSiftClause(
   field: string,
   operator: string,
   value: any,
-  options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
+  options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
 ): any {
-  const flags = options?.caseSensitive ? "" : "i";
+  const flags = options?.ignoreCase === false ? "" : "i";
   const shouldTrim = options?.trim !== false; // default true
 
   switch (operator) {

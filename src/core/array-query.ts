@@ -8,7 +8,7 @@
 
 import sift from "sift";
 import { parseCompositeFilterExpression } from "../filters/logical-operators";
-import { getByPath } from "../helpers/path";
+import { getByPath, getByPathStrict } from "../helpers/path";
 import { AggregateQuery } from "../queries/aggregate-query";
 import { IndexQuery } from "../queries/index-query";
 import { PathQuery } from "../queries/path-query";
@@ -174,8 +174,8 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
 
     const sorted = [...items];
     sorted.sort((a, b) => {
-      const valueA = getByPath(a as any, sortPath);
-      const valueB = getByPath(b as any, sortPath);
+      const valueA = getByPathStrict(a as any, sortPath);
+      const valueB = getByPathStrict(b as any, sortPath);
 
       if (valueA === null || valueA === undefined) {
         return valueB === null || valueB === undefined ? 0 : 1;
@@ -249,20 +249,36 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   filter(
     expression: string,
-    options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
+    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
   ): ArrayQuery<TItem, TMode> {
     const clause = parseCompositeFilterExpression(expression, options);
     return this._pushClause(clause);
   }
 
   /**
-   * Conditionally applies filter() if expression is present.
+   * Conditionally applies filter() only when the provided param is defined
+   * (i.e., not null and not undefined).
+   * This is a single-param convenience wrapper over filterIfAllDefined().
    */
-  filterIfPresent(
-    expression: string | null | undefined,
-    options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
+  filterIfDefined(
+    expression: string,
+    param: any,
+    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
   ): ArrayQuery<TItem, TMode> {
-    if (expression !== null && expression !== undefined && expression !== "") {
+    return this.filterIfAllDefined(expression, [param], options);
+  }
+
+  /**
+   * Conditionally applies filter() only when all provided params are defined
+   * (i.e., each is not null and not undefined).
+   */
+  filterIfAllDefined(
+    expression: string,
+    params: readonly any[] | Record<string, any>,
+    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+  ): ArrayQuery<TItem, TMode> {
+    const values = Array.isArray(params) ? params : Object.values(params);
+    if (values.every((value) => value !== null && value !== undefined)) {
       return this.filter(expression, options);
     }
     return this;
@@ -283,16 +299,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().equals() if value is present.
+   * Conditionally applies where().equals() if value is defined.
    */
-  whereIfPresent(
+  whereIfDefined(
     path: string,
     value: any,
     options?: { ignoreCase?: boolean; trim?: boolean },
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path);
-      if (options?.ignoreCase === false) builder.caseSensitive();
+      if (options?.ignoreCase === false) builder.ignoreCase(false);
       if (options?.trim === false) builder.noTrim();
       return builder.equals(value);
     }
@@ -300,16 +316,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies whereNot().equals() if value is present.
+   * Conditionally applies whereNot().equals() if value is defined.
    */
-  whereNotIfPresent(
+  whereNotIfDefined(
     path: string,
     value: any,
     options?: { ignoreCase?: boolean; trim?: boolean },
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.whereNot(path);
-      if (options?.ignoreCase === false) builder.caseSensitive();
+      if (options?.ignoreCase === false) builder.ignoreCase(false);
       if (options?.trim === false) builder.noTrim();
       return builder.equals(value);
     }
@@ -317,9 +333,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().greaterThan() if value is present.
+   * Conditionally applies where().greaterThan() if value is defined.
    */
-  greaterThanIfPresent(
+  greaterThanIfDefined(
     path: string,
     value: number | null | undefined,
   ): ArrayQuery<TItem, TMode> {
@@ -330,9 +346,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().greaterThanOrEqual() if value is present.
+   * Conditionally applies where().greaterThanOrEqual() if value is defined.
    */
-  greaterThanOrEqualIfPresent(
+  greaterThanOrEqualIfDefined(
     path: string,
     value: number | null | undefined,
   ): ArrayQuery<TItem, TMode> {
@@ -343,9 +359,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().lessThan() if value is present.
+   * Conditionally applies where().lessThan() if value is defined.
    */
-  lessThanIfPresent(
+  lessThanIfDefined(
     path: string,
     value: number | null | undefined,
   ): ArrayQuery<TItem, TMode> {
@@ -356,9 +372,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().lessThanOrEqual() if value is present.
+   * Conditionally applies where().lessThanOrEqual() if value is defined.
    */
-  lessThanOrEqualIfPresent(
+  lessThanOrEqualIfDefined(
     path: string,
     value: number | null | undefined,
   ): ArrayQuery<TItem, TMode> {
@@ -369,9 +385,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().contains() if value is present.
+   * Conditionally applies where().contains() if value is defined.
    */
-  containsIfPresent(
+  containsIfDefined(
     path: string,
     value: string | null | undefined,
     options?: { ignoreCase?: boolean; trim?: boolean },
@@ -386,9 +402,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies negated contains if value is present.
+   * Conditionally applies negated contains if value is defined.
    */
-  notContainsIfPresent(
+  notContainsIfDefined(
     path: string,
     value: string | null | undefined,
     options?: { ignoreCase?: boolean; trim?: boolean },
@@ -403,9 +419,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().startsWith() if value is present.
+   * Conditionally applies where().startsWith() if value is defined.
    */
-  startsWithIfPresent(
+  startsWithIfDefined(
     path: string,
     value: string | null | undefined,
     options?: { ignoreCase?: boolean; trim?: boolean },
@@ -420,9 +436,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies negated startsWith if value is present.
+   * Conditionally applies negated startsWith if value is defined.
    */
-  notStartsWithIfPresent(
+  notStartsWithIfDefined(
     path: string,
     value: string | null | undefined,
     options?: { ignoreCase?: boolean; trim?: boolean },
@@ -437,9 +453,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies where().endsWith() if value is present.
+   * Conditionally applies where().endsWith() if value is defined.
    */
-  endsWithIfPresent(
+  endsWithIfDefined(
     path: string,
     value: string | null | undefined,
     options?: { ignoreCase?: boolean; trim?: boolean },
@@ -454,9 +470,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Conditionally applies negated endsWith if value is present.
+   * Conditionally applies negated endsWith if value is defined.
    */
-  notEndsWithIfPresent(
+  notEndsWithIfDefined(
     path: string,
     value: string | null | undefined,
     options?: { ignoreCase?: boolean; trim?: boolean },
@@ -569,7 +585,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     }
     const results = this._executeFilter();
     return results.reduce((total, item) => {
-      const value = getByPath(item as any, path);
+      const value = getByPathStrict(item as any, path);
       const num = typeof value === "number" ? value : 0;
       return total + num;
     }, 0) as any;
@@ -587,7 +603,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const results = this._executeFilter();
     if (results.length === 0) return 0 as any;
     const total = results.reduce((sum, item) => {
-      const value = getByPath(item as any, path);
+      const value = getByPathStrict(item as any, path);
       return sum + (typeof value === "number" ? value : 0);
     }, 0);
     return (total / results.length) as any;
@@ -605,7 +621,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const results = this._executeFilter();
     if (results.length === 0) return null as any;
     const values = results
-      .map((item) => getByPath(item as any, path))
+      .map((item) => getByPathStrict(item as any, path))
       .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
     return (values.length > 0 ? Math.min(...values) : null) as any;
@@ -623,7 +639,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const results = this._executeFilter();
     if (results.length === 0) return null as any;
     const values = results
-      .map((item) => getByPath(item as any, path))
+      .map((item) => getByPathStrict(item as any, path))
       .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
     return (values.length > 0 ? Math.max(...values) : null) as any;
@@ -644,7 +660,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     return this._executeFilter().reduce((sum, item) => {
       let productValue = 1;
       for (const path of paths) {
-        const value = getByPath(item as any, path);
+        const value = getByPathStrict(item as any, path);
         const num = Number(value);
         if (Number.isNaN(num)) {
           throw new Error(
@@ -682,7 +698,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const grouped: Record<string, TItem[]> = {};
 
     for (const item of results) {
-      const groupValue = getByPath(item as any, path);
+      const groupValue = getByPathStrict(item as any, path);
       const key = String(groupValue);
       if (!grouped[key]) {
         grouped[key] = [];
@@ -713,7 +729,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
 
     for (const item of results) {
       const value = isDotPath
-        ? getByPath(item as any, path)
+        ? getByPathStrict(item as any, path)
         : this._getUniqueDeepPropertyValue(item as any, path);
       if (!seen.has(value)) {
         seen.add(value);
@@ -795,7 +811,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
 
       if (typeof obj === "object") {
         if (isPath) {
-          const value = getByPath(obj, pathOrProperty);
+          const value = getByPathStrict(obj, pathOrProperty);
           if (value !== undefined) {
             results.push(value);
           }
@@ -839,14 +855,14 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
 
       if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
         for (const [key, path] of Object.entries(pathOrPaths)) {
-          result[key] = getByPath(item as any, path);
+          result[key] = getByPathStrict(item as any, path);
         }
       } else {
         const paths = Array.isArray(pathOrPaths)
           ? pathOrPaths
           : [pathOrPaths, ...rest];
         for (const path of paths) {
-          result[path] = getByPath(item as any, path);
+          result[path] = getByPathStrict(item as any, path);
         }
       }
 
@@ -1094,7 +1110,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       return this._deriveUnbound<TOut>("map2", path1, path2, fn);
     }
     const mapped = this._executeFilter().map((item) =>
-      fn(getByPath(item as any, path1), getByPath(item as any, path2)),
+      fn(
+        getByPathStrict(item as any, path1),
+        getByPathStrict(item as any, path2),
+      ),
     );
     return ArrayQuery._bound<TOut>(mapped) as any;
   }
@@ -1110,7 +1129,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       return this._deriveUnbound<TOut>("mapn", paths, fn);
     }
     const mapped = this._executeFilter().map((item) => {
-      const values = paths.map((p) => getByPath(item as any, p));
+      const values = paths.map((p) => getByPathStrict(item as any, p));
       return fn(...values);
     });
     return ArrayQuery._bound<TOut>(mapped) as any;
@@ -1145,7 +1164,11 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     }
     return this._executeFilter().reduce(
       (acc, item) =>
-        fn(acc, getByPath(item as any, path1), getByPath(item as any, path2)),
+        fn(
+          acc,
+          getByPathStrict(item as any, path1),
+          getByPathStrict(item as any, path2),
+        ),
       init,
     ) as any;
   }
@@ -1162,7 +1185,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       return this._appendStep("reducen", paths, fn, init) as any;
     }
     return this._executeFilter().reduce((acc, item) => {
-      const values = paths.map((p) => getByPath(item as any, p));
+      const values = paths.map((p) => getByPathStrict(item as any, p));
       return fn(acc, ...values);
     }, init) as any;
   }
@@ -1364,7 +1387,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       // Unbound: input is data
       let items: any[];
       if (this._arrayPath !== undefined) {
-        items = getByPath(input, this._arrayPath);
+        items = getByPathStrict(input, this._arrayPath);
         if (!Array.isArray(items)) {
           throw new Error(
             `Expected array at path "${this._arrayPath}", got ${typeof items}.`,

@@ -33,7 +33,7 @@ describe("WhereBuilder", () => {
       const result = query(testData)
         .array("users")
         .where("name")
-        .caseSensitive()
+        .ignoreCase(false)
         .equals("alice")
         .all();
       expect(result).toHaveLength(0);
@@ -165,7 +165,7 @@ describe("WhereBuilder", () => {
     });
   });
 
-  describe(".ignoreCase() and .caseSensitive()", () => {
+  describe(".ignoreCase()", () => {
     it("should toggle case sensitivity", () => {
       const ignoreCase = query(testData)
         .array("users")
@@ -175,13 +175,13 @@ describe("WhereBuilder", () => {
         .all();
       expect(ignoreCase).toHaveLength(1);
 
-      const caseSensitive = query(testData)
+      const strictCase = query(testData)
         .array("users")
         .where("name")
-        .caseSensitive()
+        .ignoreCase(false)
         .equals("ALICE")
         .all();
-      expect(caseSensitive).toHaveLength(0);
+      expect(strictCase).toHaveLength(0);
     });
   });
 
@@ -194,19 +194,27 @@ describe("WhereBuilder", () => {
       const result = query(dataWithSpaces)
         .array("items")
         .where("name")
-        .equals("Alice")
+        .equals("  Alice  ")
         .all();
       expect(result).toHaveLength(1);
     });
 
     it("should not trim if noTrim() is called", () => {
-      const dataWithPaddedSpaces = {
-        items: [{ name: "  Alice  " }, { name: "Bob" }],
-      };
-      const result = query(dataWithPaddedSpaces)
+      const result = query(dataWithSpaces)
         .array("items")
         .where("name")
         .noTrim()
+        .equals("  Alice  ")
+        .all();
+      expect(result).toHaveLength(0);
+    });
+
+    it("should re-enable trimming when trim() is called", () => {
+      const result = query(dataWithSpaces)
+        .array("items")
+        .where("name")
+        .noTrim()
+        .trim()
         .equals("  Alice  ")
         .all();
       expect(result).toHaveLength(1);

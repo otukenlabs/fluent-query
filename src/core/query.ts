@@ -3,7 +3,7 @@
  * @description Main query entry point and JsonQueryRoot class.
  */
 
-import { getByPath } from "../helpers/path";
+import { getByPathStrict } from "../helpers/path";
 import { ObjectGroupQuery } from "../queries/object-group-query";
 import { ArrayQuery } from "./array-query";
 
@@ -28,8 +28,8 @@ import { ArrayQuery } from "./array-query";
  * const results = query(resp)
  * .array('items')
  * .where('type')
- * .contains('pre') // partial match
  * .ignoreCase() // ignore case
+ * .contains('pre') // partial match
  * .all();
  * ```
  *
@@ -80,7 +80,7 @@ export class JsonQueryRoot<TRoot> {
    * @returns An {@link ArrayQuery} that can be filtered fluently.
    */
   array<TItem = any>(path: string): ArrayQuery<TItem, "bound"> {
-    const v = getByPath(this.root as any, path);
+    const v = getByPathStrict(this.root as any, path);
     if (!Array.isArray(v)) {
       throw new Error(
         `Expected array at path "${path}", but found ${typeof v}.`,
@@ -103,7 +103,7 @@ export class JsonQueryRoot<TRoot> {
    * ```
    */
   objectGroups(path: string): ObjectGroupQuery {
-    const v = getByPath(this.root as any, path);
+    const v = getByPathStrict(this.root as any, path);
     if (!v || typeof v !== "object" || Array.isArray(v)) {
       throw new Error(`Expected object at path "${path}".`);
     }
@@ -149,7 +149,7 @@ export class JsonQueryRoot<TRoot> {
     if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
       // Object format: { outputKey: 'path' }
       for (const [key, path] of Object.entries(pathOrPaths)) {
-        result[key] = getByPath(this.root as any, path);
+        result[key] = getByPathStrict(this.root as any, path);
       }
     } else {
       // String or array format
@@ -157,7 +157,7 @@ export class JsonQueryRoot<TRoot> {
         ? pathOrPaths
         : [pathOrPaths, ...rest];
       for (const path of paths) {
-        result[path] = getByPath(this.root as any, path);
+        result[path] = getByPathStrict(this.root as any, path);
       }
     }
 
@@ -193,7 +193,7 @@ export class JsonQueryRoot<TRoot> {
           "Use recipe.run(items) or query(data).array(path).run(recipe) instead.",
       );
     }
-    const items = getByPath(this.root as any, path) as TItem[];
+    const items = getByPathStrict(this.root as any, path) as TItem[];
     if (!Array.isArray(items)) {
       throw new Error(`Expected array at path "${path}", got ${typeof items}.`);
     }
