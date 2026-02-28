@@ -146,6 +146,87 @@ const ids = query(data).array("users").pluck("id").all();
 
 // With transformations
 const idsAsStrings = query(data).array("users").pluck("id").string().all();
+
+// Keep only values of a runtime type (no coercion)
+const numbersOnly = query(data)
+  .array("mixed")
+  .pluck("value")
+  .ofType("number")
+  .all();
+// [{ value: 1 }, { value: '3' }, { value: 'john' }, { value: 5 }] -> [1, 5]
+
+// Convert signed numbers to absolute values
+const absoluteDeltas = query(data)
+  .array("measurements")
+  .pluck("delta")
+  .abs()
+  .all();
+
+// Clamp values into an inclusive range
+const boundedScores = query(data)
+  .array("scores")
+  .pluck("value")
+  .clamp(0, 100)
+  .all();
+
+// Scale values by a factor
+const scaled = query(data).array("metrics").pluck("value").scale(10).all();
+
+// Offset values by a delta
+const celsius = query(data)
+  .array("temperatures")
+  .pluck("kelvin")
+  .offset(-273.15)
+  .all();
+
+// Round to fixed decimal places
+const roundedPrices = query(data)
+  .array("products")
+  .pluck("price")
+  .round(2)
+  .all();
+
+// Optional banker's rounding mode for decimal ties
+const roundedPricesHalfEven = query(data)
+  .array("products")
+  .pluck("price")
+  .round(1, { mode: "halfEven" })
+  .all();
+// [1.25, 1.35] -> [1.2, 1.4]
+
+// Round to significant digits
+const roundedSig = query(data)
+  .array("metrics")
+  .pluck("value")
+  .roundSignificant(3)
+  .all();
+
+// Optional scientific/banker's rounding mode for ties
+const roundedSigHalfEven = query(data)
+  .array("metrics")
+  .pluck("value")
+  .roundSignificant(2, { mode: "halfEven" })
+  .all();
+// [125, 135] -> [120, 140]
+```
+
+### Path Helpers
+
+```typescript
+import { getByPath } from "fluent-query";
+
+const obj = {
+  profile: { name: "Alice", nickname: undefined },
+  items: [undefined, { id: 2 }],
+};
+
+getByPath(obj, "profile.name"); // "Alice"
+getByPath(obj, "profile.nickname"); // undefined
+getByPath(obj, "items[0]"); // undefined
+
+// Throws for missing/non-traversable paths
+getByPath(obj, "profile.age"); // throws
+getByPath(obj, "items[99]"); // throws
 ```
 
 ### Map / Transform
@@ -424,11 +505,7 @@ indexing, `.length`, `.map()`, spread, and `for..of`. It also exposes
 `.toRecipe()` for extracting the pipeline that produced it.
 
 ```typescript
-const result = query(data)
-  .array("items")
-  .where("type")
-  .equals("Premium")
-  .all();
+const result = query(data).array("items").where("type").equals("Premium").all();
 
 Array.isArray(result); // true
 result.length; // 3
@@ -467,7 +544,11 @@ When a recipe has an embedded array path (extracted from a bound chain), you
 can apply it directly to a root object:
 
 ```typescript
-const recipe = query(data).array("items").where("type").equals("Premium").toRecipe();
+const recipe = query(data)
+  .array("items")
+  .where("type")
+  .equals("Premium")
+  .toRecipe();
 
 // Equivalent to query(newData).array("items").where("type").equals("Premium")
 query(newData).run(recipe).all();
@@ -594,7 +675,48 @@ and record themselves as steps on unbound pipelines.
 
 ```typescript
 .where('name').equals('john', { ignoreCase: true, trim: true })
-.filter('name contains john', { caseSensitive: false, trim: true })
+.filter('name contains john', { ignoreCase: true, trim: true })
+```
+
+Migration note (pre-2.0 syntax):
+
+```typescript
+// Before
+.where('name').caseSensitive().equals('John')
+
+// After
+.where('name').ignoreCase(false).equals('John')
+```
+
+Conditional helpers:
+
+`IfDefined` means the gated value(s) are neither `null` nor `undefined`.
+
+```typescript
+filterIfDefined(expression, param, options?)
+filterIfAllDefined(expression, params, options?)
+whereIfDefined(path, value, options?)
+whereNotIfDefined(path, value, options?)
+greaterThanIfDefined(path, value)
+greaterThanOrEqualIfDefined(path, value)
+lessThanIfDefined(path, value)
+lessThanOrEqualIfDefined(path, value)
+containsIfDefined(path, value, options?)
+notContainsIfDefined(path, value, options?)
+startsWithIfDefined(path, value, options?)
+notStartsWithIfDefined(path, value, options?)
+endsWithIfDefined(path, value, options?)
+notEndsWithIfDefined(path, value, options?)
+```
+
+Conditional filter gating examples:
+
+```typescript
+// Single-param gating (applies filter only if minPrice is not null/undefined)
+.filterIfDefined("price > 100", minPrice)
+
+// Multi-param gating (applies filter only if ALL params are not null/undefined)
+.filterIfAllDefined("price > 100 and type == 'Premium'", [minPrice, type])
 ```
 
 ### Decimal Precision Options

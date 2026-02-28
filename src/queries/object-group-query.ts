@@ -4,7 +4,7 @@
  */
 
 import { ArrayQuery } from "../core/array-query";
-import { getByPath } from "../helpers/path";
+import { getByPathStrict } from "../helpers/path";
 import type { GroupItemMetadata } from "../types";
 
 /**
@@ -52,7 +52,7 @@ export class ObjectGroupQuery {
   flatArray<TItem = any>(arrayPath: string): TItem[] {
     const results: TItem[] = [];
     for (const [key, value] of this.entries()) {
-      const arr = getByPath(value as any, arrayPath);
+      const arr = getByPathStrict(value as any, arrayPath);
       if (!Array.isArray(arr)) {
         throw new Error(
           `Expected array at path "${arrayPath}" in group "${key}".`,
@@ -72,7 +72,7 @@ export class ObjectGroupQuery {
   ): Array<[TItem, GroupItemMetadata]> {
     const results: Array<[TItem, GroupItemMetadata]> = [];
     for (const [key, value] of this.entries()) {
-      const arr = getByPath(value as any, arrayPath);
+      const arr = getByPathStrict(value as any, arrayPath);
       if (!Array.isArray(arr)) {
         throw new Error(
           `Expected array at path "${arrayPath}" in group "${key}".`,

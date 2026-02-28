@@ -19,8 +19,8 @@ import type { ArrayQuery } from "./array-query";
  * const results = query(resp)
  * .array('items')
  * .where('type')
- * .contains('pre')
  * .ignoreCase()
+ * .contains('pre')
  * .all();
  * ```
  *
@@ -29,7 +29,7 @@ import type { ArrayQuery } from "./array-query";
  * const results = query(resp)
  * .array('items')
  * .where('type')
- * .caseSensitive()
+ * .ignoreCase(false)
  * .equals('Premium')
  * .all();
  * ```
@@ -65,20 +65,12 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Makes string matching case-insensitive for this clause.
+   * Configures case-insensitive string matching for this clause.
    *
    * @defaultValue enabled by default
    */
-  ignoreCase(): this {
-    this.opts.caseInsensitive = true;
-    return this;
-  }
-
-  /**
-   * Makes string matching case-sensitive for this clause.
-   */
-  caseSensitive(): this {
-    this.opts.caseInsensitive = false;
+  ignoreCase(enabled: boolean = true): this {
+    this.opts.caseInsensitive = enabled;
     return this;
   }
 

@@ -90,7 +90,7 @@ export function splitLogicalOperators(expression: string): {
  */
 export function parseCompositeFilterExpression(
   expression: string,
-  options?: { caseSensitive?: boolean; trim?: boolean; decimals?: number },
+  options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
 ): any {
   const { expressions, operators } = splitLogicalOperators(expression);
 
