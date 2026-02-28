@@ -678,16 +678,6 @@ and record themselves as steps on unbound pipelines.
 .filter('name contains john', { ignoreCase: true, trim: true })
 ```
 
-Migration note (pre-2.0 syntax):
-
-```typescript
-// Before
-.where('name').caseSensitive().equals('John')
-
-// After
-.where('name').ignoreCase(false).equals('John')
-```
-
 Conditional helpers:
 
 `IfDefined` means the gated value(s) are neither `null` nor `undefined`.
