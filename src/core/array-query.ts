@@ -7,16 +7,16 @@
  */
 
 import sift from "sift";
-import { ArrayQueryMetadata, Primitive } from "../types";
-import { getByPath } from "../helpers/path";
 import { parseCompositeFilterExpression } from "../filters/logical-operators";
-import { WhereBuilder } from "./where-builder";
+import { getByPath } from "../helpers/path";
 import { AggregateQuery } from "../queries/aggregate-query";
-import { ValueArrayQuery } from "../queries/value-array-query";
-import { PathQuery } from "../queries/path-query";
 import { IndexQuery } from "../queries/index-query";
-import { QueryResult, _setArrayQueryRef } from "./query-result";
-import { PipelineStep, isWhereStep } from "./pipeline-step";
+import { PathQuery } from "../queries/path-query";
+import { ValueArrayQuery } from "../queries/value-array-query";
+import type { ArrayQueryMetadata, Primitive } from "../types";
+import { isWhereStep, type PipelineStep } from "./pipeline-step";
+import { _setArrayQueryRef, QueryResult } from "./query-result";
+import { WhereBuilder } from "./where-builder";
 
 /**
  * Fluent query wrapper around an array, parameterized by execution mode.
@@ -108,7 +108,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * Creates a new instance with one step appended (no clause).
    * Used for recording non-clause steps like sort, take, drop.
    */
-  private _appendStep(method: string, ...args: any[]): ArrayQuery<TItem, TMode> {
+  private _appendStep(
+    method: string,
+    ...args: any[]
+  ): ArrayQuery<TItem, TMode> {
     return new ArrayQuery<TItem, TMode>(
       this.items,
       [...this.steps, { method, args }],
@@ -518,7 +521,11 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     }
     const results = this._executeFilter();
     const stepsWithTerminal = [...this.steps, { method: "all", args: [] }];
-    return QueryResult.create(results, stepsWithTerminal, this._arrayPath) as any;
+    return QueryResult.create(
+      results,
+      stepsWithTerminal,
+      this._arrayPath,
+    ) as any;
   }
 
   /**
@@ -554,7 +561,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   /**
    * Returns the sum of values at path.
    */
-  sum(path: string): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+  sum(
+    path: string,
+  ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("sum", path) as any;
     }
@@ -597,7 +606,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     if (results.length === 0) return null as any;
     const values = results
       .map((item) => getByPath(item as any, path))
-      .filter((v) => v !== null && v !== undefined && !isNaN(Number(v)))
+      .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
     return (values.length > 0 ? Math.min(...values) : null) as any;
   }
@@ -615,7 +624,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     if (results.length === 0) return null as any;
     const values = results
       .map((item) => getByPath(item as any, path))
-      .filter((v) => v !== null && v !== undefined && !isNaN(Number(v)))
+      .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
     return (values.length > 0 ? Math.max(...values) : null) as any;
   }
@@ -637,7 +646,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       for (const path of paths) {
         const value = getByPath(item as any, path);
         const num = Number(value);
-        if (isNaN(num)) {
+        if (Number.isNaN(num)) {
           throw new Error(
             `Invalid number at path "${path}" for product calculation`,
           );
@@ -730,6 +739,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
       if (typeof node !== "object") return;
 
+      // biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn requires ES2022, tsconfig targets ES2020
       if (Object.prototype.hasOwnProperty.call(node, property)) {
         matches.push((node as any)[property]);
       }
@@ -1377,9 +1387,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   _pushClause(clause: any): ArrayQuery<TItem, TMode> {
     const newSteps = [...this.steps, { method: "_pushClause", args: [clause] }];
     const newClauses =
-      this.items !== undefined
-        ? [...this.clauses, clause]
-        : this.clauses;
+      this.items !== undefined ? [...this.clauses, clause] : this.clauses;
     return new ArrayQuery<TItem, TMode>(
       this.items,
       newSteps,

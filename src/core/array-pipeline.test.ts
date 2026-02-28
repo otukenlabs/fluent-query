@@ -1,6 +1,4 @@
 import { arrayPipeline, query } from "../index";
-import { ArrayQuery } from "./array-query";
-import { QueryResult } from "./query-result";
 
 interface Item {
   id: number;
@@ -64,10 +62,7 @@ describe("arrayPipeline (unbound mode)", () => {
     });
 
     it("applies not modifier", () => {
-      const pipe = arrayPipeline<Item>()
-        .where("type")
-        .not()
-        .equals("Premium");
+      const pipe = arrayPipeline<Item>().where("type").not().equals("Premium");
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(2);
       expect(result.some((i) => i.type === "Premium")).toBe(false);
@@ -123,9 +118,7 @@ describe("arrayPipeline (unbound mode)", () => {
 
   describe("reuse on multiple datasets", () => {
     it("runs the same pipeline on different data", () => {
-      const premiums = arrayPipeline<Item>()
-        .where("type")
-        .equals("Premium");
+      const premiums = arrayPipeline<Item>().where("type").equals("Premium");
 
       const resultA = premiums.run(datasetA).all();
       const resultB = premiums.run(datasetB).all();
@@ -230,7 +223,9 @@ describe("arrayPipeline (unbound mode)", () => {
         { id: 1, tags: ["a", "b"] },
         { id: 2, tags: ["c"] },
       ];
-      const pipe = arrayPipeline<(typeof data)[0]>().flatMap((item) => item.tags);
+      const pipe = arrayPipeline<(typeof data)[0]>().flatMap(
+        (item) => item.tags,
+      );
       const result = pipe.run(data).all();
       expect(result).toEqual(["a", "b", "c"]);
     });
@@ -377,7 +372,9 @@ describe("arrayPipeline (unbound mode)", () => {
     });
 
     it("matches filters with regex", () => {
-      const pipe = arrayPipeline<Item>().where("name").matches(/^[A-E]/);
+      const pipe = arrayPipeline<Item>()
+        .where("name")
+        .matches(/^[A-E]/);
       expect(pipe.run(datasetA).count()).toBe(4); // Alpha, Beta, Delta, Epsilon
     });
   });
@@ -418,13 +415,10 @@ describe("arrayPipeline (unbound mode)", () => {
 
   describe("reduce / fold", () => {
     it("reduces with a pipeline", () => {
-      const pipe = arrayPipeline<Item>()
-        .where("type")
-        .equals("Premium");
-      const total = pipe.run(datasetA).reduce(
-        (acc: number, item: Item) => acc + item.price,
-        0,
-      );
+      const pipe = arrayPipeline<Item>().where("type").equals("Premium");
+      const total = pipe
+        .run(datasetA)
+        .reduce((acc: number, item: Item) => acc + item.price, 0);
       expect(total).toBe(950);
     });
   });
@@ -441,10 +435,7 @@ describe(".toRecipe() from bound chain", () => {
         { id: 3, type: "A", price: 30 },
       ],
     };
-    const bound = query(data)
-      .array("things")
-      .where("type")
-      .equals("A");
+    const bound = query(data).array("things").where("type").equals("A");
 
     const recipe = bound.toRecipe();
     // Recipe has embedded path "things", so pass a root object
@@ -621,11 +612,7 @@ describe(".run() overloads", () => {
 describe("chaining after .run()", () => {
   it("supports further .where() after .run()", () => {
     const pipe = arrayPipeline<Item>().where("type").equals("Premium");
-    const result = pipe
-      .run(datasetA)
-      .where("price")
-      .greaterThan(200)
-      .all();
+    const result = pipe.run(datasetA).where("price").greaterThan(200).all();
 
     expect(result).toHaveLength(2);
     expect(result[0].id).toBe(1);
@@ -634,10 +621,7 @@ describe("chaining after .run()", () => {
 
   it("supports .sort() after .run()", () => {
     const pipe = arrayPipeline<Item>().where("type").equals("Premium");
-    const result = pipe
-      .run(datasetA)
-      .sort("price", "asc")
-      .all();
+    const result = pipe.run(datasetA).sort("price", "asc").all();
 
     expect(result[0].price).toBe(150);
     expect(result[result.length - 1].price).toBe(500);
@@ -648,10 +632,7 @@ describe("chaining after .run()", () => {
 
 describe("conditional terminals in unbound mode", () => {
   it(".all() in unbound returns the pipeline itself", () => {
-    const pipe = arrayPipeline<Item>()
-      .where("type")
-      .equals("Premium")
-      .all();
+    const pipe = arrayPipeline<Item>().where("type").equals("Premium").all();
 
     // The result is still an ArrayQuery (unbound) since .all() records a step
     const result = (pipe as any).run(datasetA);
@@ -661,30 +642,21 @@ describe("conditional terminals in unbound mode", () => {
   });
 
   it(".count() in unbound records a step", () => {
-    const pipe = arrayPipeline<Item>()
-      .where("type")
-      .equals("Premium")
-      .count();
+    const pipe = arrayPipeline<Item>().where("type").equals("Premium").count();
 
     const result = (pipe as any).run(datasetA);
     expect(result).toBe(3);
   });
 
   it(".first() in unbound records a step", () => {
-    const pipe = arrayPipeline<Item>()
-      .where("type")
-      .equals("Premium")
-      .first();
+    const pipe = arrayPipeline<Item>().where("type").equals("Premium").first();
 
     const result = (pipe as any).run(datasetA);
     expect(result.id).toBe(1);
   });
 
   it(".exists() in unbound records a step", () => {
-    const pipe = arrayPipeline<Item>()
-      .where("type")
-      .equals("Premium")
-      .exists();
+    const pipe = arrayPipeline<Item>().where("type").equals("Premium").exists();
 
     const result = (pipe as any).run(datasetA);
     expect(result).toBe(true);
@@ -761,9 +733,9 @@ describe("partition() bound-only", () => {
 
   it("throws on unbound pipeline", () => {
     const pipe = arrayPipeline<Item>();
-    expect(() =>
-      pipe.partition((i) => i.type === "Premium"),
-    ).toThrow("partition() is only available on bound queries");
+    expect(() => pipe.partition((i) => i.type === "Premium")).toThrow(
+      "partition() is only available on bound queries",
+    );
   });
 });
 
@@ -872,30 +844,21 @@ describe("design spec syntax examples", () => {
   });
 
   it("Example 9: pipeline with reduce", () => {
-    const pipe = arrayPipeline<Item>()
-      .where("type")
-      .equals("Premium");
+    const pipe = arrayPipeline<Item>().where("type").equals("Premium");
 
-    const total = pipe.run(datasetA).reduce(
-      (acc: number, i: Item) => acc + i.price,
-      0,
-    );
+    const total = pipe
+      .run(datasetA)
+      .reduce((acc: number, i: Item) => acc + i.price, 0);
     expect(total).toBe(950);
   });
 
   it("Example 10: composing transform + recipe", () => {
-    const filterRecipe = arrayPipeline<Item>()
-      .where("type")
-      .equals("Premium");
+    const filterRecipe = arrayPipeline<Item>().where("type").equals("Premium");
 
-    const sortTransform = arrayPipeline<Item>()
-      .sort("price", "asc");
+    const sortTransform = arrayPipeline<Item>().sort("price", "asc");
 
     // Apply filter, then apply sort transform on the results
-    const result = filterRecipe
-      .run(datasetA)
-      .run(sortTransform)
-      .all();
+    const result = filterRecipe.run(datasetA).run(sortTransform).all();
 
     expect(result).toHaveLength(3);
     expect(result[0].price).toBe(150);

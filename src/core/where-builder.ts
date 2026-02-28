@@ -3,8 +3,8 @@
  * @description WhereBuilder class for fluent where clause construction.
  */
 
-import { Primitive, WhereOptions } from "../types";
-import { escapeRegex, makeRegex } from "../helpers/regex";
+import { makeRegex } from "../helpers/regex";
+import type { Primitive, WhereOptions } from "../types";
 import type { ArrayQuery } from "./array-query";
 
 /**

@@ -19,8 +19,8 @@ export function _setArrayQueryRef(ref: any): void {
  * Also exposes `.toRecipe()` for extracting a reusable pipeline.
  */
 export class QueryResult<T> extends Array<T> {
-  /** @internal */ declare private readonly _steps: PipelineStep[];
-  /** @internal */ declare private readonly _arrayPath: string | undefined;
+  /** @internal */ private declare readonly _steps: PipelineStep[];
+  /** @internal */ private declare readonly _arrayPath: string | undefined;
 
   private constructor(
     items: T[],

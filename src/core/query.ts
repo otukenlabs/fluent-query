@@ -4,8 +4,8 @@
  */
 
 import { getByPath } from "../helpers/path";
-import { ArrayQuery } from "./array-query";
 import { ObjectGroupQuery } from "../queries/object-group-query";
+import { ArrayQuery } from "./array-query";
 
 /**
  * Entry point for fluent JSON querying.
@@ -185,9 +185,7 @@ export class JsonQueryRoot<TRoot> {
    *
    * @throws Error if the recipe has no embedded path.
    */
-  run<TItem>(
-    recipe: ArrayQuery<TItem, "unbound">,
-  ): ArrayQuery<TItem, "bound"> {
+  run<TItem>(recipe: ArrayQuery<TItem, "unbound">): ArrayQuery<TItem, "bound"> {
     const path = recipe._getArrayPath();
     if (path === undefined) {
       throw new Error(
@@ -197,9 +195,7 @@ export class JsonQueryRoot<TRoot> {
     }
     const items = getByPath(this.root as any, path) as TItem[];
     if (!Array.isArray(items)) {
-      throw new Error(
-        `Expected array at path "${path}", got ${typeof items}.`,
-      );
+      throw new Error(`Expected array at path "${path}", got ${typeof items}.`);
     }
     // Replay the recipe's steps onto the extracted items
     const steps = recipe._getSteps();
