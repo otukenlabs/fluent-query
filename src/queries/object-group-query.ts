@@ -3,9 +3,9 @@
  * @description ObjectGroupQuery helper for selecting child objects under a "groups" object.
  */
 
-import { getByPath } from "../helpers/path";
-import { GroupItemMetadata } from "../types";
 import { ArrayQuery } from "../core/array-query";
+import { getByPath } from "../helpers/path";
+import type { GroupItemMetadata } from "../types";
 
 /**
  * Helper for selecting child objects under a "groups" object.
@@ -35,7 +35,7 @@ export class ObjectGroupQuery {
   entries(): Array<[string, any]> {
     return Object.entries(this.groups).filter(([key]) => {
       if (this.includeKeys && !this.includeKeys.has(key)) return false;
-      if (this.excludeKeys && this.excludeKeys.has(key)) return false;
+      if (this.excludeKeys?.has(key)) return false;
       return true;
     });
   }
@@ -100,12 +100,12 @@ export class ObjectGroupQuery {
    * .all();
    * ```
    */
-  arrays<TItem = any>(arrayPath: string): ArrayQuery<TItem> {
+  arrays<TItem = any>(arrayPath: string): ArrayQuery<TItem, "bound"> {
     const items = this.flatArray<TItem>(arrayPath);
     const metadata = this.flatArrayWithMetadata<TItem>(arrayPath).map(
       ([, m]) => m,
     );
-    return new ArrayQuery<TItem>(items, {
+    return ArrayQuery._bound<TItem>(items, {
       groupsRootPath: this.groupsRootPath,
       arrayPath,
       itemMetadata: metadata,

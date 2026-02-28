@@ -44,7 +44,7 @@ export function parseFilterExpression(expression: string): {
   ) {
     // String literal
     value = trimmedVal.slice(1, -1);
-  } else if (!isNaN(Number(trimmedVal)) && trimmedVal !== "") {
+  } else if (!Number.isNaN(Number(trimmedVal)) && trimmedVal !== "") {
     // Number
     value = Number(trimmedVal);
   } else if (trimmedVal === "true" || trimmedVal === "false") {
@@ -89,11 +89,9 @@ export function expressionToSiftClause(
               const fieldValue = this[field];
               if (typeof fieldValue !== "number") return false;
               const rounded1 =
-                Math.round(fieldValue * Math.pow(10, decimals)) /
-                Math.pow(10, decimals);
+                Math.round(fieldValue * 10 ** decimals) / 10 ** decimals;
               const rounded2 =
-                Math.round(value * Math.pow(10, decimals)) /
-                Math.pow(10, decimals);
+                Math.round(value * 10 ** decimals) / 10 ** decimals;
               return rounded1 === rounded2;
             },
           },
@@ -112,11 +110,9 @@ export function expressionToSiftClause(
               const fieldValue = this[field];
               if (typeof fieldValue !== "number") return true;
               const rounded1 =
-                Math.round(fieldValue * Math.pow(10, decimals)) /
-                Math.pow(10, decimals);
+                Math.round(fieldValue * 10 ** decimals) / 10 ** decimals;
               const rounded2 =
-                Math.round(value * Math.pow(10, decimals)) /
-                Math.pow(10, decimals);
+                Math.round(value * 10 ** decimals) / 10 ** decimals;
               return rounded1 !== rounded2;
             },
           },

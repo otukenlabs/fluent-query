@@ -163,7 +163,7 @@ export class ValueArrayQuery<TValue = any> {
         );
       }
       const num = Number(value);
-      if (isNaN(num)) {
+      if (Number.isNaN(num)) {
         throw new Error(
           `Cannot convert "${value}" to number. Value is NaN after conversion.`,
         );

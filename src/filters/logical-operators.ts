@@ -4,8 +4,8 @@
  */
 
 import {
-  parseFilterExpression,
   expressionToSiftClause,
+  parseFilterExpression,
 } from "./filter-expression";
 
 /**
