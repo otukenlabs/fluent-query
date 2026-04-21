@@ -8,15 +8,54 @@
 
 import sift from "sift";
 import { parseCompositeFilterExpression } from "../filters/logical-operators";
+import { compactValue, type CompactOptions } from "../helpers/compact";
 import { getByPath, getByPathStrict } from "../helpers/path";
+import { setOneByPath, type SetOneOptions } from "../helpers/set-one";
+import {
+  setTopLevelValue,
+  setTopLevelValuesBatch,
+} from "../helpers/set-top-level";
+import {
+  replaceManyByScope,
+  replaceValueByScope,
+} from "../helpers/replace-value";
+import {
+  setAllByPathOccurrences,
+  setAllByPathOccurrencesBatch,
+  type SetAllUpdate,
+} from "../helpers/set-all";
+import { setPathOccurrencesIndividually } from "../helpers/set-each";
+import { hasAllInAny } from "../helpers/has-all";
+import { diffValues } from "../helpers/diff";
+import { setByPathStrict } from "../helpers/set-by-path";
+import { unsetByPathStrict } from "../helpers/unset-by-path";
 import { AggregateQuery } from "../queries/aggregate-query";
 import { IndexQuery } from "../queries/index-query";
 import { PathQuery } from "../queries/path-query";
 import { ValueArrayQuery } from "../queries/value-array-query";
-import type { ArrayQueryMetadata, Primitive } from "../types";
+import type {
+  ArrayQueryMetadata,
+  DiffOptions,
+  DiffResult,
+  FindOptions,
+  HasAllOptions,
+  Primitive,
+  ReplaceValueOptions,
+  ReplaceRule,
+  SetOptions,
+} from "../types";
 import { isWhereStep, type PipelineStep } from "./pipeline-step";
 import { _setArrayQueryRef, QueryResult } from "./query-result";
 import { WhereBuilder } from "./where-builder";
+import type { JsonQueryRoot } from "./query";
+
+let createJsonQueryRoot: ((root: any) => JsonQueryRoot<any>) | undefined;
+
+export function _setJsonQueryRootFactory(
+  factory: (root: any) => JsonQueryRoot<any>,
+): void {
+  createJsonQueryRoot = factory;
+}
 
 /**
  * Fluent query wrapper around an array, parameterized by execution mode.
@@ -28,8 +67,13 @@ import { WhereBuilder } from "./where-builder";
  *
  * @typeParam TItem - Element type.
  * @typeParam TMode - `'bound'` (default) or `'unbound'`.
+ * @typeParam TCanToRoot - Whether `.toRoot()` is available on this instance.
  */
-export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
+export class ArrayQuery<
+  TItem,
+  TMode extends "bound" | "unbound" = "bound",
+  TCanToRoot extends boolean = TMode extends "bound" ? true : false,
+> {
   // ── Private state ──────────────────────────────────────────────────────
 
   private readonly items: TItem[] | undefined;
@@ -39,6 +83,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   private readonly metadata: ArrayQueryMetadata | undefined;
   private readonly _sortPath: string | undefined;
   private readonly _sortDirection: "asc" | "desc";
+  private readonly _sortNulls: "last" | "first";
 
   // ── Constructor (private) ──────────────────────────────────────────────
 
@@ -50,6 +95,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     metadata: ArrayQueryMetadata | undefined,
     sortPath: string | undefined,
     sortDirection: "asc" | "desc",
+    sortNulls: "last" | "first",
   ) {
     this.items = items;
     this.steps = steps;
@@ -58,16 +104,17 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     this.metadata = metadata;
     this._sortPath = sortPath;
     this._sortDirection = sortDirection;
+    this._sortNulls = sortNulls;
   }
 
   // ── Static factories ───────────────────────────────────────────────────
 
   /** @internal Create a bound instance (has data). */
-  static _bound<T>(
+  static _bound<T, TCanToRoot extends boolean = true>(
     items: T[],
     metadata?: ArrayQueryMetadata,
-  ): ArrayQuery<T, "bound"> {
-    return new ArrayQuery<T, "bound">(
+  ): ArrayQuery<T, "bound", TCanToRoot> {
+    return new ArrayQuery<T, "bound", TCanToRoot>(
       items,
       [],
       [],
@@ -75,6 +122,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       metadata,
       undefined,
       "asc",
+      "last",
     );
   }
 
@@ -91,6 +139,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       undefined,
       undefined,
       "asc",
+      "last",
     );
   }
 
@@ -120,6 +169,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       this.metadata,
       this._sortPath,
       this._sortDirection,
+      this._sortNulls,
     );
   }
 
@@ -139,7 +189,36 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       undefined,
       undefined,
       "asc",
+      "last",
     );
+  }
+
+  /**
+   * Clones values before invoking user callbacks so callback-side mutation
+   * cannot mutate bound source data by reference.
+   */
+  private static _cloneForUserFn<T>(value: T): T {
+    if (value === null || value === undefined) {
+      return value;
+    }
+
+    if (typeof globalThis.structuredClone === "function") {
+      return globalThis.structuredClone(value);
+    }
+
+    if (Array.isArray(value)) {
+      return value.map((item) => ArrayQuery._cloneForUserFn(item)) as T;
+    }
+
+    if (typeof value === "object") {
+      const clone: Record<string, any> = {};
+      for (const [key, val] of Object.entries(value as Record<string, any>)) {
+        clone[key] = ArrayQuery._cloneForUserFn(val);
+      }
+      return clone as T;
+    }
+
+    return value;
   }
 
   /**
@@ -167,21 +246,31 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   private _applySorting(items: TItem[]): TItem[] {
     const sortPath = this._sortPath;
     const sortDirection = this._sortDirection || "asc";
+    const sortNulls = this._sortNulls || "last";
 
-    if (!sortPath) {
+    if (sortPath === undefined) {
       return items;
     }
 
-    const sorted = [...items];
-    sorted.sort((a, b) => {
-      const valueA = getByPathStrict(a as any, sortPath);
-      const valueB = getByPathStrict(b as any, sortPath);
+    const decorated = items.map((item, index) => ({ item, index }));
+    decorated.sort((a, b) => {
+      const valueA =
+        sortPath === ""
+          ? (a.item as any)
+          : getByPathStrict(a.item as any, sortPath);
+      const valueB =
+        sortPath === ""
+          ? (b.item as any)
+          : getByPathStrict(b.item as any, sortPath);
 
       if (valueA === null || valueA === undefined) {
-        return valueB === null || valueB === undefined ? 0 : 1;
+        if (valueB === null || valueB === undefined) {
+          return 0;
+        }
+        return sortNulls === "last" ? 1 : -1;
       }
       if (valueB === null || valueB === undefined) {
-        return -1;
+        return sortNulls === "last" ? -1 : 1;
       }
 
       let comparison = 0;
@@ -191,10 +280,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
         comparison = 1;
       }
 
-      return sortDirection === "asc" ? comparison : -comparison;
+      const directionAdjusted =
+        sortDirection === "asc" ? comparison : -comparison;
+      if (directionAdjusted !== 0) {
+        return directionAdjusted;
+      }
+
+      return a.index - b.index;
     });
 
-    return sorted;
+    return decorated.map((entry) => entry.item);
   }
 
   /**
@@ -258,30 +353,122 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   /**
    * Conditionally applies filter() only when the provided param is defined
    * (i.e., not null and not undefined).
-   * This is a single-param convenience wrapper over filterIfAllDefined().
+   * If expression contains a named placeholder (e.g. $minPrice), that
+   * placeholder is bound to the provided param.
    */
   filterIfDefined(
     expression: string,
     param: any,
     options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
   ): ArrayQuery<TItem, TMode> {
-    return this.filterIfAllDefined(expression, [param], options);
+    if (param === null || param === undefined) {
+      return this;
+    }
+
+    const placeholders = Array.from(
+      new Set(
+        Array.from(expression.matchAll(/\$([a-zA-Z_][a-zA-Z0-9_]*)/g)).map(
+          (m) => m[1],
+        ),
+      ),
+    );
+
+    if (placeholders.length === 0) {
+      return this.filter(expression, options);
+    }
+
+    if (placeholders.length !== 1) {
+      throw new Error(
+        "filterIfDefined() supports expressions with exactly one named placeholder.",
+      );
+    }
+
+    const boundExpression = this._bindExpressionParams(expression, {
+      [placeholders[0]]: param,
+    });
+    return this.filter(boundExpression, options);
   }
 
   /**
    * Conditionally applies filter() only when all provided params are defined
    * (i.e., each is not null and not undefined).
+   *
+   * Uses an object map for both defined-value gating and named placeholder
+   * binding (e.g. $minPrice).
    */
   filterIfAllDefined(
     expression: string,
-    params: readonly any[] | Record<string, any>,
+    params: Record<string, any>,
     options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
   ): ArrayQuery<TItem, TMode> {
-    const values = Array.isArray(params) ? params : Object.values(params);
+    if (Array.isArray(params)) {
+      throw new Error(
+        "filterIfAllDefined() expects an object map of params (e.g. { minPrice, maxPrice }). Array params are not supported.",
+      );
+    }
+
+    const values = Object.values(params);
     if (values.every((value) => value !== null && value !== undefined)) {
-      return this.filter(expression, options);
+      const boundExpression = this._bindExpressionParams(expression, params);
+      return this.filter(boundExpression, options);
     }
     return this;
+  }
+
+  /**
+   * Binds named placeholders (e.g. $minPrice) using object params.
+   */
+  private _bindExpressionParams(
+    expression: string,
+    params: Record<string, any>,
+  ): string {
+    const hasPlaceholder = /\$[a-zA-Z_][a-zA-Z0-9_]*/.test(expression);
+
+    if (!hasPlaceholder) {
+      return expression;
+    }
+
+    return expression.replace(
+      /\$([a-zA-Z_][a-zA-Z0-9_]*)/g,
+      (_match, name: string) => {
+        if (!(name in params)) {
+          throw new Error(
+            `Missing placeholder value for $${name} in filter expression.`,
+          );
+        }
+        const value = params[name];
+        if (value === null || value === undefined) {
+          throw new Error(
+            `Placeholder value for $${name} must be defined in filter expression.`,
+          );
+        }
+        return this._toExpressionLiteral(value);
+      },
+    );
+  }
+
+  /**
+   * Converts a JS value to a filter-expression literal.
+   */
+  private _toExpressionLiteral(value: any): string {
+    if (typeof value === "string") {
+      return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+    }
+    if (typeof value === "number" || typeof value === "bigint") {
+      return String(value);
+    }
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+    if (value === null) {
+      return "null";
+    }
+    if (value === undefined) {
+      return "undefined";
+    }
+    throw new Error(
+      `Unsupported placeholder value type: ${typeof value}. Use string, number, bigint, boolean, null, or undefined.`,
+    );
   }
 
   /**
@@ -299,6 +486,15 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
+   * Begins a where clause on the item value itself.
+   *
+   * Useful for primitive arrays where each item is the value to compare.
+   */
+  whereSelf(): WhereBuilder<TItem, TMode> {
+    return this.where("");
+  }
+
+  /**
    * Conditionally applies where().equals() if value is defined.
    */
   whereIfDefined(
@@ -308,8 +504,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path);
-      if (options?.ignoreCase === false) builder.ignoreCase(false);
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.equals(value);
     }
     return this;
@@ -325,8 +529,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.whereNot(path);
-      if (options?.ignoreCase === false) builder.ignoreCase(false);
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.equals(value);
     }
     return this;
@@ -394,8 +606,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path);
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.contains(value);
     }
     return this;
@@ -411,8 +631,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path).not();
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.contains(value);
     }
     return this;
@@ -428,8 +656,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path);
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.startsWith(value);
     }
     return this;
@@ -445,8 +681,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path).not();
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.startsWith(value);
     }
     return this;
@@ -462,8 +706,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path);
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.endsWith(value);
     }
     return this;
@@ -479,8 +731,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path).not();
-      if (options?.ignoreCase !== false) builder.ignoreCase();
-      if (options?.trim === false) builder.noTrim();
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
       return builder.endsWith(value);
     }
     return this;
@@ -499,6 +759,44 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
+   * Filters items where value at path is NOT in the provided list.
+   */
+  whereNotIn(path: string, values: Primitive[]): ArrayQuery<TItem, TMode> {
+    if (!Array.isArray(values) || values.length === 0) {
+      throw new Error(
+        `whereNotIn("${path}") requires a non-empty array of values.`,
+      );
+    }
+    return this._pushClause({ [path]: { $nin: values } });
+  }
+
+  /**
+   * Filters items where the key(s) at path do not exist.
+   * Pass a string array to require all given keys to be missing.
+   */
+  whereMissing(path: string | string[]): ArrayQuery<TItem, TMode> {
+    if (Array.isArray(path)) {
+      return this._pushClause({
+        $and: path.map((p) => ({ [p]: { $exists: false } })),
+      });
+    }
+    return this._pushClause({ [path]: { $exists: false } });
+  }
+
+  /**
+   * Filters items where the key(s) at path exist.
+   * Pass a string array to require all given keys to be present.
+   */
+  whereExists(path: string | string[]): ArrayQuery<TItem, TMode> {
+    if (Array.isArray(path)) {
+      return this._pushClause({
+        $and: path.map((p) => ({ [p]: { $exists: true } })),
+      });
+    }
+    return this._pushClause({ [path]: { $exists: true } });
+  }
+
+  /**
    * Filters items where all provided field-value pairs match exactly.
    */
   whereAll(criteria: Record<string, Primitive>): ArrayQuery<TItem, TMode> {
@@ -506,20 +804,50 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
+   * Filters items where ANY provided field-value pair matches exactly.
+   */
+  whereAny(criteria: Record<string, Primitive>): ArrayQuery<TItem, TMode> {
+    const entries = Object.entries(criteria);
+    if (entries.length === 0) {
+      throw new Error("whereAny() requires at least one criterion.");
+    }
+
+    const orClauses = entries.map(([key, value]) => ({ [key]: value }));
+    return this._pushClause({ $or: orClauses });
+  }
+
+  /**
+   * Filters items where NONE of the provided field-value pairs match exactly.
+   */
+  whereNone(criteria: Record<string, Primitive>): ArrayQuery<TItem, TMode> {
+    const entries = Object.entries(criteria);
+    if (entries.length === 0) {
+      throw new Error("whereNone() requires at least one criterion.");
+    }
+
+    const norClauses = entries.map(([key, value]) => ({ [key]: value }));
+    return this._pushClause({ $nor: norClauses });
+  }
+
+  /**
    * Sorts items by the value at the given path.
    */
   sort(
-    path: string,
-    direction: "asc" | "desc" = "asc",
+    path: string = "",
+    options?: { direction?: "asc" | "desc"; nulls?: "last" | "first" },
   ): ArrayQuery<TItem, TMode> {
+    const direction = options?.direction ?? "asc";
+    const nulls = options?.nulls ?? "last";
+
     return new ArrayQuery<TItem, TMode>(
       this.items,
-      [...this.steps, { method: "sort", args: [path, direction] }],
+      [...this.steps, { method: "sort", args: [path, { direction, nulls }] }],
       this.clauses,
       this._arrayPath,
       this.metadata,
       path,
       direction,
+      nulls,
     );
   }
 
@@ -555,12 +883,97 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
+   * Compares each selected item with an expected value and returns diff summary.
+   */
+  diff(
+    expected: unknown,
+    options?: DiffOptions,
+  ): TMode extends "bound" ? DiffResult : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("diff", expected, options) as any;
+    }
+
+    const selected = this._executeFilter();
+    const max = options?.maxMismatches;
+    const maxMismatches =
+      typeof max === "number" && Number.isFinite(max) && max > 0
+        ? Math.floor(max)
+        : Number.POSITIVE_INFINITY;
+
+    const mismatches: DiffResult["mismatches"] = [];
+    let truncated = false;
+
+    for (let i = 0; i < selected.length; i++) {
+      if (mismatches.length >= maxMismatches) {
+        truncated = true;
+        break;
+      }
+
+      const rowResult = diffValues(expected, selected[i], {
+        ...options,
+        maxMismatches: maxMismatches - mismatches.length,
+      });
+
+      for (const mismatch of rowResult.mismatches) {
+        mismatches.push({ ...mismatch, itemIndex: i });
+      }
+
+      if (rowResult.truncated || mismatches.length >= maxMismatches) {
+        truncated = true;
+        break;
+      }
+    }
+
+    const result: DiffResult = {
+      equal: mismatches.length === 0,
+      mismatches,
+    };
+
+    if (truncated) {
+      result.truncated = true;
+    }
+
+    return result as any;
+  }
+
+  /**
+   * Returns true when any selected item contains all criteria key/value pairs.
+   *
+   * With `scope: "top-level"` (default), pairs must exist on the item itself.
+   * With `scope: "deep"`, each pair may be matched anywhere in the item's subtree.
+   */
+  hasAll(
+    criteria: Record<string, unknown>,
+    options?: HasAllOptions,
+  ): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("hasAll", criteria, options) as any;
+    }
+
+    return hasAllInAny(this._executeFilter(), criteria, options) as any;
+  }
+
+  /**
+   * Returns true when any selected item contains a single key/value pair.
+   *
+   * This is a convenience alias for `hasAll({ [key]: value }, options)`.
+   */
+  has(
+    key: string,
+    value: unknown,
+    options?: HasAllOptions,
+  ): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+    return this.hasAll({ [key]: value }, options) as any;
+  }
+
+  /**
    * Returns true if at least one item matches.
    */
   exists(): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("exists") as any;
     }
+    this._assertBooleanTerminalHasSelectionContext("exists");
     return (this._executeFilter().length > 0) as any;
   }
 
@@ -571,6 +984,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     if (this.items === undefined) {
       return this._appendStep("every") as any;
     }
+    this._assertBooleanTerminalHasSelectionContext("every");
     return (this._executeFilter().length === this.items!.length) as any;
   }
 
@@ -578,42 +992,81 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * Returns the sum of values at path.
    */
   sum(
-    path: string,
+    path: string = "",
+    options?: { decimals?: number },
   ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
-      return this._appendStep("sum", path) as any;
+      return this._appendStep("sum", path, options) as any;
     }
+
+    const decimals = options?.decimals;
+    if (
+      decimals !== undefined &&
+      (!Number.isInteger(decimals) || decimals < 0 || decimals > 100)
+    ) {
+      throw new Error(
+        "sum() options.decimals expects an integer between 0 and 100.",
+      );
+    }
+
     const results = this._executeFilter();
-    return results.reduce((total, item) => {
-      const value = getByPathStrict(item as any, path);
-      const num = typeof value === "number" ? value : 0;
-      return total + num;
-    }, 0) as any;
+    const total = results.reduce((sum, item) => {
+      const value =
+        path === "" ? (item as any) : getByPathStrict(item as any, path);
+      return sum + (typeof value === "number" ? value : 0);
+    }, 0);
+
+    if (decimals === undefined) {
+      return total as any;
+    }
+
+    const factor = 10 ** decimals;
+    return (Math.round(total * factor) / factor) as any;
   }
 
   /**
    * Returns the average of values at path.
    */
   average(
-    path: string,
+    path: string = "",
+    options?: { decimals?: number },
   ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
-      return this._appendStep("average", path) as any;
+      return this._appendStep("average", path, options) as any;
     }
+
+    const decimals = options?.decimals;
+    if (
+      decimals !== undefined &&
+      (!Number.isInteger(decimals) || decimals < 0 || decimals > 100)
+    ) {
+      throw new Error(
+        "average() options.decimals expects an integer between 0 and 100.",
+      );
+    }
+
     const results = this._executeFilter();
     if (results.length === 0) return 0 as any;
     const total = results.reduce((sum, item) => {
-      const value = getByPathStrict(item as any, path);
+      const value =
+        path === "" ? (item as any) : getByPathStrict(item as any, path);
       return sum + (typeof value === "number" ? value : 0);
     }, 0);
-    return (total / results.length) as any;
+
+    const average = total / results.length;
+    if (decimals === undefined) {
+      return average as any;
+    }
+
+    const factor = 10 ** decimals;
+    return (Math.round(average * factor) / factor) as any;
   }
 
   /**
    * Returns the minimum value at path.
    */
   min(
-    path: string,
+    path: string = "",
   ): TMode extends "bound" ? number | null : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("min", path) as any;
@@ -621,7 +1074,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const results = this._executeFilter();
     if (results.length === 0) return null as any;
     const values = results
-      .map((item) => getByPathStrict(item as any, path))
+      .map((item) =>
+        path === "" ? (item as any) : getByPathStrict(item as any, path),
+      )
       .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
     return (values.length > 0 ? Math.min(...values) : null) as any;
@@ -631,7 +1086,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * Returns the maximum value at path.
    */
   max(
-    path: string,
+    path: string = "",
   ): TMode extends "bound" ? number | null : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("max", path) as any;
@@ -639,7 +1094,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const results = this._executeFilter();
     if (results.length === 0) return null as any;
     const values = results
-      .map((item) => getByPathStrict(item as any, path))
+      .map((item) =>
+        path === "" ? (item as any) : getByPathStrict(item as any, path),
+      )
       .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
     return (values.length > 0 ? Math.max(...values) : null) as any;
@@ -712,15 +1169,24 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   /**
    * Returns distinct items by unique value at path.
    */
-  distinct(
-    path?: string,
-  ): TMode extends "bound" ? TItem[] : ArrayQuery<TItem, "unbound"> {
+  distinct(path?: string): ArrayQuery<TItem, TMode> {
     if (this.items === undefined) {
       return this._appendStep("distinct", path) as any;
     }
     const results = this._executeFilter();
     if (!path) {
-      return Array.from(new Set(results)) as any;
+      const seenStructural = new Set<string>();
+      const uniqueStructural: TItem[] = [];
+
+      for (const item of results) {
+        const key = this._stableStructuralKey(item);
+        if (!seenStructural.has(key)) {
+          seenStructural.add(key);
+          uniqueStructural.push(item);
+        }
+      }
+
+      return ArrayQuery._bound<TItem>(uniqueStructural, this.metadata) as any;
     }
 
     const seen = new Set<any>();
@@ -737,7 +1203,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
     }
 
-    return unique as any;
+    return ArrayQuery._bound<TItem>(unique, this.metadata) as any;
   }
 
   /**
@@ -782,6 +1248,64 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
+   * @internal
+   * Produces a stable serialization key for deep structural equality.
+   */
+  private _stableStructuralKey(value: any): string {
+    return this._serializeStructural(value, new WeakSet<object>());
+  }
+
+  /**
+   * @internal
+   * Recursively serializes a value with stable object key ordering.
+   */
+  private _serializeStructural(value: any, seen: WeakSet<object>): string {
+    if (value === null) return "null";
+
+    const valueType = typeof value;
+    if (valueType === "string") return `str:${JSON.stringify(value)}`;
+    if (valueType === "number") {
+      if (Number.isNaN(value)) return "num:NaN";
+      if (Object.is(value, -0)) return "num:-0";
+      if (value === Infinity) return "num:Infinity";
+      if (value === -Infinity) return "num:-Infinity";
+      return `num:${value}`;
+    }
+    if (valueType === "boolean") return `bool:${value}`;
+    if (valueType === "bigint") return `bigint:${value.toString()}`;
+    if (valueType === "undefined") return "undefined";
+    if (valueType === "symbol") return `symbol:${String(value)}`;
+    if (valueType === "function") return `function:${String(value)}`;
+
+    if (value instanceof Date) {
+      return `date:${value.toISOString()}`;
+    }
+    if (value instanceof RegExp) {
+      return `regexp:${value.toString()}`;
+    }
+
+    if (seen.has(value)) {
+      return "[Circular]";
+    }
+    seen.add(value);
+
+    if (Array.isArray(value)) {
+      const items = value.map((item) => this._serializeStructural(item, seen));
+      seen.delete(value);
+      return `[${items.join(",")}]`;
+    }
+
+    const recordValue = value as Record<string, unknown>;
+    const keys = Object.keys(recordValue).sort();
+    const entries = keys.map(
+      (key) =>
+        `${JSON.stringify(key)}:${this._serializeStructural(recordValue[key], seen)}`,
+    );
+    seen.delete(value);
+    return `{${entries.join(",")}}`;
+  }
+
+  /**
    * Extracts values at path as a chainable ValueArrayQuery.
    */
   pluck<TValue = any>(path: string): ValueArrayQuery<TValue> {
@@ -797,12 +1321,37 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
   /**
    * Recursively searches for a property at any depth.
    */
-  findAll<TValue = any>(pathOrProperty: string): ValueArrayQuery<TValue> {
+  find<TValue = any>(
+    pathOrProperty: string,
+    options?: FindOptions,
+  ): ValueArrayQuery<TValue> {
     if (this.items === undefined) {
-      throw new Error("findAll() is only available on bound queries.");
+      throw new Error("find() is only available on bound queries.");
     }
     const results: TValue[] = [];
+    const scope = options?.scope ?? "deep";
     const isPath = pathOrProperty.includes(".");
+
+    const collectFromCurrentObject = (obj: any): void => {
+      if (obj === null || obj === undefined || typeof obj !== "object") {
+        return;
+      }
+      if (isPath) {
+        const value = getByPathStrict(obj, pathOrProperty);
+        if (value !== undefined) {
+          results.push(value);
+        }
+      } else if (pathOrProperty in obj) {
+        results.push(obj[pathOrProperty]);
+      }
+    };
+
+    if (scope === "top-level") {
+      for (const item of this._executeFilter()) {
+        collectFromCurrentObject(item);
+      }
+      return new ValueArrayQuery(results);
+    }
 
     const recursiveSearch = (obj: any): void => {
       if (obj === null || obj === undefined) {
@@ -810,16 +1359,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
 
       if (typeof obj === "object") {
-        if (isPath) {
-          const value = getByPathStrict(obj, pathOrProperty);
-          if (value !== undefined) {
-            results.push(value);
-          }
-        } else {
-          if (pathOrProperty in obj) {
-            results.push(obj[pathOrProperty]);
-          }
-        }
+        collectFromCurrentObject(obj);
 
         if (Array.isArray(obj)) {
           for (const item of obj) {
@@ -845,12 +1385,16 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   pick(
     pathOrPaths: string | string[] | Record<string, string>,
-    ...rest: string[]
-  ): Array<Record<string, any>> {
+    ...additionalPaths: string[]
+  ): ArrayQuery<Record<string, any>, TMode> {
     if (this.items === undefined) {
-      throw new Error("pick() is only available on bound queries.");
+      return this._deriveUnbound<Record<string, any>>(
+        "pick",
+        pathOrPaths,
+        ...additionalPaths,
+      );
     }
-    return this._executeFilter().map((item) => {
+    const picked = this._executeFilter().map((item) => {
       const result: Record<string, any> = {};
 
       if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
@@ -860,7 +1404,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       } else {
         const paths = Array.isArray(pathOrPaths)
           ? pathOrPaths
-          : [pathOrPaths, ...rest];
+          : [pathOrPaths, ...additionalPaths];
         for (const path of paths) {
           result[path] = getByPathStrict(item as any, path);
         }
@@ -868,6 +1412,63 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
 
       return result;
     });
+
+    return ArrayQuery._bound<Record<string, any>>(picked, this.metadata) as any;
+  }
+
+  /**
+   * Omits properties from each matching item.
+   */
+  omit(
+    pathOrPaths: string | string[] | Record<string, string>,
+    ...additionalPaths: string[]
+  ): ArrayQuery<Record<string, any>, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<Record<string, any>>(
+        "omit",
+        pathOrPaths,
+        ...additionalPaths,
+      );
+    }
+
+    const paths =
+      typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)
+        ? Object.values(pathOrPaths)
+        : Array.isArray(pathOrPaths)
+          ? pathOrPaths
+          : [pathOrPaths, ...additionalPaths];
+
+    const omitted = this._executeFilter().map((item) => {
+      if (item === null || item === undefined || typeof item !== "object") {
+        throw new Error("omit() is only supported for object items.");
+      }
+
+      let updated: any = item;
+      for (const path of paths) {
+        updated = unsetByPathStrict(updated, path, { onMissing: "ignore" });
+      }
+      return updated;
+    });
+
+    return ArrayQuery._bound<Record<string, any>>(
+      omitted as any,
+      this.metadata,
+    ) as any;
+  }
+
+  /**
+   * Compacts matching items by removing removable values from the result set.
+   */
+  compact(options?: CompactOptions): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("compact", options) as any;
+    }
+
+    const compacted = this._executeFilter()
+      .map((item) => compactValue(item, options))
+      .filter((item) => item !== undefined) as TItem[];
+
+    return ArrayQuery._bound<TItem>(compacted, this.metadata) as any;
   }
 
   /**
@@ -1094,8 +1695,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     if (this.items === undefined) {
       return this._deriveUnbound<TOut>("map", fn);
     }
-    const mapped = this._executeFilter().map(fn);
-    return ArrayQuery._bound<TOut>(mapped) as any;
+    const mapped = this._executeFilter().map((item) =>
+      fn(ArrayQuery._cloneForUserFn(item)),
+    );
+    return ArrayQuery._bound<TOut>(mapped, this.metadata) as any;
   }
 
   /**
@@ -1111,11 +1714,11 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     }
     const mapped = this._executeFilter().map((item) =>
       fn(
-        getByPathStrict(item as any, path1),
-        getByPathStrict(item as any, path2),
+        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path1)),
+        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path2)),
       ),
     );
-    return ArrayQuery._bound<TOut>(mapped) as any;
+    return ArrayQuery._bound<TOut>(mapped, this.metadata) as any;
   }
 
   /**
@@ -1129,10 +1732,12 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       return this._deriveUnbound<TOut>("mapn", paths, fn);
     }
     const mapped = this._executeFilter().map((item) => {
-      const values = paths.map((p) => getByPathStrict(item as any, p));
+      const values = paths.map((p) =>
+        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, p)),
+      );
       return fn(...values);
     });
-    return ArrayQuery._bound<TOut>(mapped) as any;
+    return ArrayQuery._bound<TOut>(mapped, this.metadata) as any;
   }
 
   // ── Reduce / Fold family ───────────────────────────────────────────────
@@ -1147,7 +1752,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     if (this.items === undefined) {
       return this._appendStep("reduce", fn, init) as any;
     }
-    return this._executeFilter().reduce(fn, init) as any;
+    return this._executeFilter().reduce(
+      (acc, item) => fn(acc, ArrayQuery._cloneForUserFn(item)),
+      init,
+    ) as any;
   }
 
   /**
@@ -1166,8 +1774,8 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       (acc, item) =>
         fn(
           acc,
-          getByPathStrict(item as any, path1),
-          getByPathStrict(item as any, path2),
+          ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path1)),
+          ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path2)),
         ),
       init,
     ) as any;
@@ -1185,7 +1793,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       return this._appendStep("reducen", paths, fn, init) as any;
     }
     return this._executeFilter().reduce((acc, item) => {
-      const values = paths.map((p) => getByPathStrict(item as any, p));
+      const values = paths.map((p) =>
+        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, p)),
+      );
       return fn(acc, ...values);
     }, init) as any;
   }
@@ -1228,9 +1838,231 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     }
     const result: TOut[] = [];
     for (const item of this._executeFilter()) {
-      result.push(...fn(item));
+      result.push(...fn(ArrayQuery._cloneForUserFn(item)));
     }
-    return ArrayQuery._bound<TOut>(result) as any;
+    return ArrayQuery._bound<TOut>(result, this.metadata) as any;
+  }
+
+  /**
+   * Expands and flattens an array located at the given path for each item.
+   */
+  expand<TOut = any>(
+    path: string,
+    options?: { recursive?: boolean; strict?: boolean },
+  ): ArrayQuery<TOut, TMode> {
+    if (this.items === undefined) {
+      return this._deriveUnbound<TOut>("expand", path, options);
+    }
+
+    const recursive = options?.recursive ?? false;
+    const strict = options?.strict ?? false;
+    const result: TOut[] = [];
+
+    const getNested = (obj: any): any => {
+      if (recursive) {
+        try {
+          return getByPath(obj as any, path);
+        } catch {
+          return undefined;
+        }
+      }
+      return getByPathStrict(obj as any, path);
+    };
+
+    for (const item of this._executeFilter()) {
+      const initial = getNested(item);
+      if (!Array.isArray(initial)) {
+        throw new Error(
+          `expand("${path}") expected an array at path for each item, but found ${typeof initial}.`,
+        );
+      }
+
+      if (!recursive) {
+        result.push(...(initial as TOut[]));
+        continue;
+      }
+
+      const stack = [...(initial as TOut[])].reverse();
+      while (stack.length > 0) {
+        const node = stack.pop()!;
+        result.push(node);
+
+        const nested = getNested(node);
+        if (!Array.isArray(nested)) {
+          if (strict) {
+            throw new Error(
+              `expand("${path}") expected an array at path for each descendant, but found ${typeof nested}.`,
+            );
+          }
+          continue;
+        }
+        for (let i = nested.length - 1; i >= 0; i--) {
+          stack.push((nested as TOut[])[i]);
+        }
+      }
+    }
+
+    return ArrayQuery._bound<TOut>(result, this.metadata) as any;
+  }
+
+  /**
+   * Immutably sets one path/value rule within each selected item.
+   */
+  set(
+    path: string,
+    value: unknown,
+    options?: SetOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("set", path, value, options);
+    }
+
+    const scope = options?.scope ?? "top-level";
+    const updated = this._executeFilter().map((item) =>
+      scope === "deep"
+        ? setAllByPathOccurrences(item, path, value)
+        : setTopLevelValue(item, path, value),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Immutably applies multiple path/value rules within each selected item.
+   */
+  setAll(
+    updates: ReadonlyArray<SetAllUpdate>,
+    options?: SetOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("setAll", updates, options);
+    }
+
+    const scope = options?.scope ?? "deep";
+    const updated = this._executeFilter().map((item) =>
+      scope === "deep"
+        ? setAllByPathOccurrencesBatch(item, updates)
+        : setTopLevelValuesBatch(item, updates),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Returns one updated item per matched path occurrence.
+   * Each result applies exactly one occurrence update independently.
+   */
+  setEach(path: string, value: unknown): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("setEach", path, value);
+    }
+
+    const variants = this._executeFilter().flatMap((item) =>
+      setPathOccurrencesIndividually(item, path, value),
+    );
+    return ArrayQuery._bound<TItem>(variants as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Immutably sets exactly one match for a path within each selected item.
+   */
+  setOne(
+    path: string,
+    value: unknown,
+    options?: SetOneOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("setOne", path, value, options);
+    }
+
+    const updated = this._executeFilter().map((item) =>
+      setOneByPath(item, path, value, options),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Immutably replaces occurrences of a value within each selected item.
+   *
+   * - `scope: "deep"` (default): replace anywhere in the subtree.
+   * - `scope: "top-level"`: replace only current item and direct fields/elements.
+   */
+  replaceValue(
+    fromValue: unknown,
+    toValue: unknown,
+    options?: ReplaceValueOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("replaceValue", fromValue, toValue, options);
+    }
+
+    const updated = this._executeFilter().map((item) =>
+      replaceValueByScope(item, fromValue, toValue, options),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Immutably applies ordered replacement rules within each selected item.
+   *
+   * - `scope: "deep"` (default): replace anywhere in the subtree.
+   * - `scope: "top-level"`: replace only current item and direct fields/elements.
+   */
+  replaceMany(
+    rules: ReadonlyArray<ReplaceRule>,
+    options?: ReplaceValueOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("replaceMany", rules, options);
+    }
+
+    const updated = this._executeFilter().map((item) =>
+      replaceManyByScope(item, rules, options),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Writes current array results back into root context and returns JsonQueryRoot.
+   *
+   * - Without `path`, uses the original bound array path.
+   * - With `path`, writes to the explicit target path.
+   */
+  toRoot(
+    this: ArrayQuery<TItem, "bound", true>,
+    path?: string,
+  ): JsonQueryRoot<any> {
+    if (this.items === undefined) {
+      throw new Error("toRoot() is only available on bound queries.");
+    }
+    if (!createJsonQueryRoot) {
+      throw new Error(
+        "toRoot() is unavailable: root factory is not registered.",
+      );
+    }
+
+    if (this.metadata?.itemMetadata && this.metadata.itemMetadata.length > 0) {
+      throw new Error(
+        "toRoot() is not supported for grouped arrays. Use JsonQueryRoot.setAll()/setOne() to write back explicitly.",
+      );
+    }
+
+    if (!this.metadata || !("rootSnapshot" in this.metadata)) {
+      throw new Error(
+        "toRoot() requires root context. Start from query(root).array(...).",
+      );
+    }
+
+    const rootSnapshot = this.metadata.rootSnapshot;
+    const targetPath = path ?? this.metadata.arrayPath;
+
+    if (targetPath === undefined) {
+      throw new Error(
+        "toRoot() could not resolve target path. Provide toRoot(path) explicitly.",
+      );
+    }
+
+    const updatedItems = this._executeFilter();
+    const updatedRoot = setByPathStrict(rootSnapshot, targetPath, updatedItems);
+    return createJsonQueryRoot(updatedRoot);
   }
 
   /**
@@ -1248,10 +2080,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const result: TAcc[] = [init];
     let acc = init;
     for (const item of items) {
-      acc = fn(acc, item);
+      acc = fn(acc, ArrayQuery._cloneForUserFn(item));
       result.push(acc);
     }
-    return ArrayQuery._bound<TAcc>(result) as any;
+    return ArrayQuery._bound<TAcc>(result, this.metadata) as any;
   }
 
   /**
@@ -1261,7 +2093,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     if (this.items === undefined) {
       return this._appendStep("take", n);
     }
-    return ArrayQuery._bound<TItem>(this._executeFilter().slice(0, n)) as any;
+    return ArrayQuery._bound<TItem>(
+      this._executeFilter().slice(0, n),
+      this.metadata,
+    ) as any;
   }
 
   /**
@@ -1271,7 +2106,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     if (this.items === undefined) {
       return this._appendStep("drop", n);
     }
-    return ArrayQuery._bound<TItem>(this._executeFilter().slice(n)) as any;
+    return ArrayQuery._bound<TItem>(
+      this._executeFilter().slice(n),
+      this.metadata,
+    ) as any;
   }
 
   /**
@@ -1284,10 +2122,10 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const items = this._executeFilter();
     const result: TItem[] = [];
     for (const item of items) {
-      if (!fn(item)) break;
+      if (!fn(ArrayQuery._cloneForUserFn(item))) break;
       result.push(item);
     }
-    return ArrayQuery._bound<TItem>(result) as any;
+    return ArrayQuery._bound<TItem>(result, this.metadata) as any;
   }
 
   /**
@@ -1299,8 +2137,8 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     }
     const items = this._executeFilter();
     let i = 0;
-    while (i < items.length && fn(items[i])) i++;
-    return ArrayQuery._bound<TItem>(items.slice(i)) as any;
+    while (i < items.length && fn(ArrayQuery._cloneForUserFn(items[i]))) i++;
+    return ArrayQuery._bound<TItem>(items.slice(i), this.metadata) as any;
   }
 
   /**
@@ -1315,9 +2153,12 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const yes: TItem[] = [];
     const no: TItem[] = [];
     for (const item of this._executeFilter()) {
-      (fn(item) ? yes : no).push(item);
+      (fn(ArrayQuery._cloneForUserFn(item)) ? yes : no).push(item);
     }
-    return [ArrayQuery._bound<TItem>(yes), ArrayQuery._bound<TItem>(no)];
+    return [
+      ArrayQuery._bound<TItem>(yes, this.metadata),
+      ArrayQuery._bound<TItem>(no, this.metadata),
+    ];
   }
 
   /**
@@ -1333,7 +2174,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     for (let i = 0; i < len; i++) {
       result.push([items[i], other[i]]);
     }
-    return ArrayQuery._bound<[TItem, TOther]>(result) as any;
+    return ArrayQuery._bound<[TItem, TOther]>(result, this.metadata) as any;
   }
 
   /**
@@ -1350,9 +2191,9 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
     const len = Math.min(items.length, other.length);
     const result: TOut[] = [];
     for (let i = 0; i < len; i++) {
-      result.push(fn(items[i], other[i]));
+      result.push(fn(ArrayQuery._cloneForUserFn(items[i]), other[i]));
     }
-    return ArrayQuery._bound<TOut>(result) as any;
+    return ArrayQuery._bound<TOut>(result, this.metadata) as any;
   }
 
   // ── Recipe extraction ──────────────────────────────────────────────────
@@ -1419,7 +2260,18 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
       this.metadata,
       this._sortPath,
       this._sortDirection,
+      this._sortNulls,
     );
+  }
+
+  private _assertBooleanTerminalHasSelectionContext(
+    methodName: "exists" | "every",
+  ): void {
+    if (this.clauses.length === 0 && this.steps.length === 0) {
+      throw new Error(
+        `${methodName}() cannot be called directly after array(), flatArray(), or arrays(). Add a narrowing step first (for example where(), whereIn(), whereExists(), filter(), take(), or drop()).`,
+      );
+    }
   }
 }
 
@@ -1431,7 +2283,7 @@ export class ArrayQuery<TItem, TMode extends "bound" | "unbound" = "bound"> {
  * ```typescript
  * const pipeline = arrayPipeline<Item>()
  *   .where('type').equals('Premium')
- *   .sort('price', 'desc')
+ *   .sort('price', { direction: 'desc' })
  *   .take(3);
  *
  * pipeline.run(datasetA).all();

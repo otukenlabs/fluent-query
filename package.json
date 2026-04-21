@@ -13,7 +13,9 @@
     "build": "tsc",
     "lint": "biome check src/",
     "prepublishOnly": "npm run build",
-    "test": "bun test"
+    "typecheck:tests": "tsc -p tsconfig.type-tests.json",
+    "test": "bun test",
+    "verify": "bun test && bunx tsc --noEmit && bun run typecheck:tests"
   },
   "keywords": [
     "json",

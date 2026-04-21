@@ -10,7 +10,7 @@
  */
 export class ValueArrayQuery<TValue = any> {
   /**
-   * @param values Array of values from pluck() or findAll()
+   * @param values Array of values from pluck() or find()
    */
   constructor(private readonly values: TValue[]) {}
 
@@ -396,7 +396,10 @@ export class ValueArrayQuery<TValue = any> {
    * Convert all values to strings.
    * Returns a new ValueArrayQuery with string values.
    * Converts null/undefined to empty string. Throws for objects.
+   * Optional case transform can be applied to resulting strings.
    *
+   * @param options Optional conversion options
+   * @param options.case Optional case transform for output strings
    * @returns ValueArrayQuery with string values
    * @throws Throws if any value is an object (arrays or plain objects)
    * @example
@@ -411,7 +414,8 @@ export class ValueArrayQuery<TValue = any> {
    * // [null, 'Alice', undefined] → ['', 'Alice', '']
    * ```
    */
-  string(): ValueArrayQuery<string> {
+  string(options?: { case?: "lower" | "upper" }): ValueArrayQuery<string> {
+    const caseMode = options?.case;
     const converted = this.values.map((value) => {
       // Convert null/undefined to empty string
       if (value === null || value === undefined) {
@@ -423,7 +427,14 @@ export class ValueArrayQuery<TValue = any> {
           `Cannot convert object to string: ${JSON.stringify(value)}. Objects must be converted manually.`,
         );
       }
-      return String(value);
+      const asString = String(value);
+      if (caseMode === "lower") {
+        return asString.toLowerCase();
+      }
+      if (caseMode === "upper") {
+        return asString.toUpperCase();
+      }
+      return asString;
     });
     return new ValueArrayQuery(converted);
   }

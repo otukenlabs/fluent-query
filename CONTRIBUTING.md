@@ -8,7 +8,7 @@ Thanks for contributing.
 2. Install dependencies:
 
 ```bash
-npm install
+bun install
 ```
 
 3. Run tests:
@@ -26,10 +26,16 @@ bunx tsc --noEmit
 5. Optional build verification (recommended before release):
 
 ```bash
-npm run build
+bun run build
 ```
 
 ## Project conventions
+
+### Package manager
+
+- This repo uses **Bun-first** contributor workflows.
+- Use Bun commands for install/run/build/typecheck steps in this guide.
+- Avoid mixing `npm install` and `bun install` in the same branch to prevent lockfile drift (`package-lock.json` vs `bun.lock`).
 
 ### Code style
 
@@ -45,12 +51,19 @@ Before opening a PR, run:
 ```bash
 bun test
 bunx tsc --noEmit
+bun run typecheck:tests
+```
+
+Or run the combined check:
+
+```bash
+bun run verify
 ```
 
 If your changes affect packaging/output behavior, also run:
 
 ```bash
-npm run build
+bun run build
 ```
 
 PRs that change behavior should include tests in `src/**/*.test.ts`.

@@ -35,8 +35,15 @@ import type { ArrayQuery } from "./array-query";
  * ```
  */
 export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
-  private opts: Required<WhereOptions> = { caseInsensitive: true, trim: true };
+  private opts: Required<WhereOptions> = { caseInsensitive: false, trim: true };
   private negate: boolean;
+
+  private _buildClause(condition: unknown): any {
+    if (this.path === "") {
+      return condition;
+    }
+    return { [this.path]: condition };
+  }
 
   constructor(
     private readonly parent: ArrayQuery<TItem, TMode>,
@@ -67,7 +74,7 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
   /**
    * Configures case-insensitive string matching for this clause.
    *
-   * @defaultValue enabled by default
+   * @defaultValue disabled by default
    */
   ignoreCase(enabled: boolean = true): this {
     this.opts.caseInsensitive = enabled;
@@ -130,16 +137,16 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
         this.opts.trim = options.trim;
       }
     }
-    if (typeof value === "string" && this.opts.caseInsensitive) {
+    if (typeof value === "string") {
       const regex = makeRegex(value, "exact", this.opts);
-      return this.parent._pushClause({
-        [this.path]: this.negate ? { $not: regex } : regex,
-      });
+      return this.parent._pushClause(
+        this._buildClause(this.negate ? { $not: regex } : regex),
+      );
     }
     if (this.negate) {
-      return this.parent._pushClause({ [this.path]: { $ne: value } });
+      return this.parent._pushClause(this._buildClause({ $ne: value }));
     }
-    return this.parent._pushClause({ [this.path]: value });
+    return this.parent._pushClause(this._buildClause(value));
   }
 
   /**
@@ -153,13 +160,55 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Alias for negated {@link equals}.
+   * Negated equality.
+   */
+  notEquals(
+    value: Primitive,
+    options?: { ignoreCase?: boolean; trim?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    return this.not().equals(value, options);
+  }
+
+  /**
+   * Alias for {@link notEquals}.
    */
   ne(
     value: Primitive,
     options?: { ignoreCase?: boolean; trim?: boolean },
   ): ArrayQuery<TItem, TMode> {
-    return this.not().equals(value, options);
+    return this.notEquals(value, options);
+  }
+
+  /**
+   * Membership match for values in a list.
+   *
+   * Equivalent to {@link ArrayQuery.whereIn} for the current `where(path)`.
+   *
+   * @example
+   * ```ts
+   * const results = query(resp)
+   * .array('items')
+   * .where('type')
+   * .in(['Premium', 'Basic'])
+   * .all();
+   * ```
+   */
+  in(values: Primitive[]): ArrayQuery<TItem, TMode> {
+    if (!Array.isArray(values) || values.length === 0) {
+      throw new Error(
+        `whereIn("${this.path}") requires a non-empty array of values.`,
+      );
+    }
+
+    if (this.negate) {
+      return this.parent._pushClause(this._buildClause({ $nin: values }));
+    }
+
+    if (this.path === "") {
+      return this.parent._pushClause(this._buildClause({ $in: values }));
+    }
+
+    return this.parent.whereIn(this.path, values);
   }
 
   /**
@@ -199,9 +248,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
     }
     const regex = makeRegex(value, "contains", this.opts);
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -241,9 +290,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
     }
     const regex = makeRegex(value, "startsWith", this.opts);
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -283,9 +332,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
     }
     const regex = makeRegex(value, "endsWith", this.opts);
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -301,9 +350,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * ```
    */
   matches(regex: RegExp): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -320,9 +369,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * ```
    */
   greaterThan(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $lte: value } : { $gt: value },
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $lte: value } : { $gt: value }),
+    );
   }
 
   /**
@@ -346,9 +395,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * ```
    */
   greaterThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $lt: value } : { $gte: value },
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $lt: value } : { $gte: value }),
+    );
   }
 
   /**
@@ -372,9 +421,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * ```
    */
   lessThan(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $gte: value } : { $lt: value },
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $gte: value } : { $lt: value }),
+    );
   }
 
   /**
@@ -398,9 +447,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * ```
    */
   lessThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $gt: value } : { $lte: value },
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $gt: value } : { $lte: value }),
+    );
   }
 
   /**

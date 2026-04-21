@@ -20,13 +20,13 @@ describe("WhereBuilder", () => {
       expect(result[0].name).toBe("Alice");
     });
 
-    it("should support case-insensitive matching (default)", () => {
+    it("should be case-sensitive by default", () => {
       const result = query(testData)
         .array("users")
         .where("name")
         .equals("alice")
         .all();
-      expect(result).toHaveLength(1);
+      expect(result).toHaveLength(0);
     });
 
     it("should support case-sensitive matching", () => {
@@ -35,6 +35,15 @@ describe("WhereBuilder", () => {
         .where("name")
         .ignoreCase(false)
         .equals("alice")
+        .all();
+      expect(result).toHaveLength(0);
+    });
+
+    it("should support case-sensitive matching via inline options", () => {
+      const result = query(testData)
+        .array("users")
+        .where("name")
+        .equals("alice", { ignoreCase: false })
         .all();
       expect(result).toHaveLength(0);
     });
@@ -50,13 +59,33 @@ describe("WhereBuilder", () => {
       expect(result).toHaveLength(3);
     });
 
-    it("should be case-insensitive by default", () => {
+    it("should be case-sensitive by default", () => {
       const result = query(testData)
         .array("users")
         .where("email")
         .contains("EXAMPLE")
         .all();
-      expect(result).toHaveLength(3);
+      expect(result).toHaveLength(0);
+    });
+
+    it("should allow inline options to override ignoreCase() chain setting", () => {
+      const result = query(testData)
+        .array("users")
+        .where("email")
+        .ignoreCase()
+        .contains("EXAMPLE", { ignoreCase: false })
+        .all();
+
+      expect(result).toHaveLength(0);
+    });
+
+    it("should support case-sensitive matching via inline options", () => {
+      const result = query(testData)
+        .array("users")
+        .where("email")
+        .contains("EXAMPLE", { ignoreCase: false })
+        .all();
+      expect(result).toHaveLength(0);
     });
   });
 
@@ -70,6 +99,55 @@ describe("WhereBuilder", () => {
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe("Alice");
     });
+
+    it("should support case-sensitive matching via inline options", () => {
+      const result = query(testData)
+        .array("users")
+        .where("name")
+        .startsWith("a", { ignoreCase: false })
+        .all();
+      expect(result).toHaveLength(0);
+    });
+
+    it("should respect trim: true for values with leading whitespace", () => {
+      const data = {
+        users: [
+          { name: " Antony Santos" },
+          { name: "Bryant Edwards" },
+          { name: "Anthony Soprano" },
+        ],
+      };
+
+      const result = query(data)
+        .array("users")
+        .where("name")
+        .startsWith("ant", { ignoreCase: true, trim: true })
+        .all();
+
+      expect(result.map((x) => x.name)).toEqual([
+        " Antony Santos",
+        "Anthony Soprano",
+      ]);
+    });
+
+    it("should respect trim: true for negated startsWith", () => {
+      const data = {
+        users: [
+          { id: 1, name: " Antony Santos" },
+          { id: 2, name: "Bryant Edwards" },
+          { id: 3, name: "Anthony Soprano" },
+        ],
+      };
+
+      const result = query(data)
+        .array("users")
+        .where("name")
+        .not()
+        .startsWith("ant", { ignoreCase: true, trim: true })
+        .all();
+
+      expect(result.map((x) => x.id)).toEqual([2]);
+    });
   });
 
   describe(".endsWith()", () => {
@@ -81,6 +159,15 @@ describe("WhereBuilder", () => {
         .all();
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe("Charlie");
+    });
+
+    it("should support case-sensitive matching via inline options", () => {
+      const result = query(testData)
+        .array("users")
+        .where("name")
+        .endsWith("IE", { ignoreCase: false })
+        .all();
+      expect(result).toHaveLength(0);
     });
   });
 
@@ -116,7 +203,17 @@ describe("WhereBuilder", () => {
       expect(result[0].name).toBe("Alice");
     });
 
-    it("should support ne() as alias for not equals", () => {
+    it("should support notEquals() for not equals", () => {
+      const result = query(testData)
+        .array("users")
+        .where("name")
+        .notEquals("Alice")
+        .all();
+      expect(result).toHaveLength(2);
+      expect(result.some((u) => u.name === "Alice")).toBe(false);
+    });
+
+    it("should support ne() as alias for notEquals()", () => {
       const result = query(testData)
         .array("users")
         .where("name")
@@ -162,6 +259,38 @@ describe("WhereBuilder", () => {
         .lte(30)
         .all();
       expect(result).toHaveLength(2);
+    });
+
+    it("should support in() as whereIn() terminal alias", () => {
+      const result = query(testData)
+        .array("users")
+        .where("name")
+        .in(["Alice", "Charlie"])
+        .all();
+
+      expect(result).toHaveLength(2);
+      expect(result.map((u) => u.name)).toEqual(["Alice", "Charlie"]);
+    });
+
+    it("should support not().in() as negated membership", () => {
+      const result = query(testData)
+        .array("users")
+        .where("name")
+        .not()
+        .in(["Alice", "Charlie"])
+        .all();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("Bob");
+    });
+
+    it("should throw for in() with empty values", () => {
+      expect(() =>
+        query(testData)
+          .array("users")
+          .where("name")
+          .in([] as any[]),
+      ).toThrow('whereIn("name") requires a non-empty array of values.');
     });
   });
 

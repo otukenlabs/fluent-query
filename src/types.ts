@@ -49,7 +49,62 @@ export type GroupItemMetadata = {
  * Metadata for path reconstruction in grouped array queries.
  */
 export type ArrayQueryMetadata = {
+  rootSnapshot?: unknown;
   groupsRootPath?: string;
   arrayPath?: string;
   itemMetadata?: Array<GroupItemMetadata>;
+};
+
+export type DiffReason =
+  | "value-mismatch"
+  | "type-mismatch"
+  | "missing-key"
+  | "extra-key"
+  | "array-length-mismatch"
+  | "array-order-mismatch";
+
+export type Mismatch = {
+  path: string;
+  reason: DiffReason;
+  expected?: unknown;
+  actual?: unknown;
+  itemIndex?: number;
+  groupKey?: string;
+};
+
+export type DiffOptions = {
+  unorderedArrays?: boolean | string[];
+  ignorePaths?: string[];
+  maxMismatches?: number;
+};
+
+export type HasAllOptions = {
+  scope?: "top-level" | "deep";
+};
+
+export type FindOptions = {
+  scope?: "top-level" | "deep";
+};
+
+export type SetOptions = {
+  scope?: "top-level" | "deep";
+};
+
+export type ReplaceValueOptions = {
+  scope?: "top-level" | "deep";
+  keySelection?: {
+    mode: "include" | "exclude";
+    keys: string[];
+  };
+};
+
+export type ReplaceRule = {
+  from: unknown;
+  to: unknown;
+};
+
+export type DiffResult = {
+  equal: boolean;
+  mismatches: Mismatch[];
+  truncated?: boolean;
 };

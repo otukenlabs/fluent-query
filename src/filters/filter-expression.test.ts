@@ -68,9 +68,29 @@ describe("filter-expression utilities", () => {
       );
     });
 
+    it("supports symbol operators without strict spacing", () => {
+      expect(parseFilterExpression("type=='Basic'")).toEqual({
+        field: "type",
+        operator: "==",
+        value: "Basic",
+      });
+
+      expect(parseFilterExpression("price>=100")).toEqual({
+        field: "price",
+        operator: ">=",
+        value: 100,
+      });
+    });
+
     it("throws on invalid expression format", () => {
       expect(() => parseFilterExpression("invalid")).toThrow(
         "Invalid filter expression",
+      );
+    });
+
+    it("throws with migration guidance for binary not syntax", () => {
+      expect(() => parseFilterExpression("status not 'Active'")).toThrow(
+        'Binary "not" is not supported. Use "!=" instead',
       );
     });
   });
@@ -98,9 +118,6 @@ describe("filter-expression utilities", () => {
     it("handles direct comparison operators", () => {
       expect(expressionToSiftClause("x", "==", 1)).toEqual({ x: 1 });
       expect(expressionToSiftClause("x", "!=", 1)).toEqual({
-        x: { $ne: 1 },
-      });
-      expect(expressionToSiftClause("x", "not", 1)).toEqual({
         x: { $ne: 1 },
       });
       expect(expressionToSiftClause("x", ">", 1)).toEqual({ x: { $gt: 1 } });
@@ -138,8 +155,8 @@ describe("filter-expression utilities", () => {
       expect(containsStrict.name.flags.includes("i")).toBe(false);
       expect(containsStrict.name.source).toContain("  ab ");
 
-      expect(starts.name.source.startsWith("^")).toBe(true);
-      expect(ends.name.source.endsWith("$")).toBe(true);
+      expect(starts.name.source.startsWith("^\\s*")).toBe(true);
+      expect(ends.name.source.endsWith("\\s*$")).toBe(true);
     });
 
     it("throws on unknown operators", () => {
@@ -163,6 +180,40 @@ describe("filter-expression utilities", () => {
       expect(split.operators).toEqual(["or", "and"]);
     });
 
+    it("treats && and || as aliases for and/or", () => {
+      const split = splitLogicalOperators(
+        "city=='NY'&&age>=21 || active==true",
+      );
+
+      expect(split.expressions).toEqual([
+        "city=='NY'",
+        "age>=21",
+        "active==true",
+      ]);
+      expect(split.operators).toEqual(["and", "or"]);
+    });
+
+    it("splits logical operators without strict spacing when boundaries are clear", () => {
+      const split = splitLogicalOperators(
+        "price>=100 andtype=='x' or type=='Basic'",
+      );
+
+      expect(split.expressions).toEqual([
+        "price>=100 andtype=='x'",
+        "type=='Basic'",
+      ]);
+      expect(split.operators).toEqual(["or"]);
+
+      const splitNoSpaceAroundAnd = splitLogicalOperators(
+        "city=='NY'and age>=21",
+      );
+      expect(splitNoSpaceAroundAnd.expressions).toEqual([
+        "city=='NY'",
+        "age>=21",
+      ]);
+      expect(splitNoSpaceAroundAnd.operators).toEqual(["and"]);
+    });
+
     it("throws when no valid expressions exist", () => {
       expect(() => parseCompositeFilterExpression("   ")).toThrow(
         'No valid expressions found in filter: "   "',
@@ -174,7 +225,7 @@ describe("filter-expression utilities", () => {
       expect(clause).toEqual({ age: { $gte: 21 } });
     });
 
-    it("parses mixed and/or left-to-right", () => {
+    it("parses mixed and/or with precedence", () => {
       const clause = parseCompositeFilterExpression(
         "city == 'NY' and age >= 21 or active == true",
       );
@@ -187,6 +238,68 @@ describe("filter-expression utilities", () => {
           { active: true },
         ],
       });
+    });
+
+    it("parses composite expressions without strict spacing around operators", () => {
+      const clause = parseCompositeFilterExpression("city=='NY'and age>=21");
+
+      expect(clause).toEqual({
+        $and: [{ city: "NY" }, { age: { $gte: 21 } }],
+      });
+    });
+
+    it("supports unary logical not with keyword and parentheses", () => {
+      const clause = parseCompositeFilterExpression(
+        "not (city == 'NY' and age >= 21)",
+      );
+
+      expect(clause).toEqual({
+        $nor: [
+          {
+            $and: [{ city: "NY" }, { age: { $gte: 21 } }],
+          },
+        ],
+      });
+    });
+
+    it("supports unary logical ! and symbol logical operators", () => {
+      const clause = parseCompositeFilterExpression(
+        "!(city=='NY' && age>=21) || active==true",
+      );
+
+      expect(clause).toEqual({
+        $or: [
+          {
+            $nor: [
+              {
+                $and: [{ city: "NY" }, { age: { $gte: 21 } }],
+              },
+            ],
+          },
+          { active: true },
+        ],
+      });
+    });
+
+    it("applies precedence: not > and > or", () => {
+      const clause = parseCompositeFilterExpression(
+        "not city == 'NY' and age >= 21 or active == true",
+      );
+
+      expect(clause).toEqual({
+        $or: [
+          {
+            $and: [{ $nor: [{ city: "NY" }] }, { age: { $gte: 21 } }],
+          },
+          { active: true },
+        ],
+      });
+    });
+
+    it("throws on mismatched parentheses", () => {
+      expect(() =>
+        parseCompositeFilterExpression("(city == 'NY' and age >= 21"),
+      ).toThrow("Mismatched parentheses in filter expression.");
     });
   });
 });

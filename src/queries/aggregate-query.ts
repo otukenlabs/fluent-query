@@ -20,34 +20,71 @@ export class AggregateQuery {
   /**
    * Add sum aggregation for a path.
    *
-   * @param path Field path containing numeric values
+   * @param path Field path containing numeric values (optional for primitive arrays)
+   * @param options Optional rounding options
    * @returns this for chaining
    */
-  sum(path: string): this {
-    this.aggregations.sum = this.items.reduce((total, item) => {
-      const value = getByPathStrict(item, path);
+  sum(path: string = "", options?: { decimals?: number }): this {
+    const decimals = options?.decimals;
+    if (
+      decimals !== undefined &&
+      (!Number.isInteger(decimals) || decimals < 0 || decimals > 100)
+    ) {
+      throw new Error(
+        "sum() options.decimals expects an integer between 0 and 100.",
+      );
+    }
+
+    const total = this.items.reduce((sum, item) => {
+      const value = path === "" ? item : getByPathStrict(item, path);
       const num = typeof value === "number" ? value : 0;
-      return total + num;
+      return sum + num;
     }, 0);
+
+    if (decimals === undefined) {
+      this.aggregations.sum = total;
+      return this;
+    }
+
+    const factor = 10 ** decimals;
+    this.aggregations.sum = Math.round(total * factor) / factor;
     return this;
   }
 
   /**
    * Add average aggregation for a path.
    *
-   * @param path Field path containing numeric values
+   * @param path Field path containing numeric values (optional for primitive arrays)
+   * @param options Optional rounding options
    * @returns this for chaining
    */
-  average(path: string): this {
+  average(path: string = "", options?: { decimals?: number }): this {
+    const decimals = options?.decimals;
+    if (
+      decimals !== undefined &&
+      (!Number.isInteger(decimals) || decimals < 0 || decimals > 100)
+    ) {
+      throw new Error(
+        "average() options.decimals expects an integer between 0 and 100.",
+      );
+    }
+
     if (this.items.length === 0) {
       this.aggregations.average = 0;
     } else {
       const sum = this.items.reduce((total, item) => {
-        const value = getByPathStrict(item, path);
+        const value = path === "" ? item : getByPathStrict(item, path);
         const num = typeof value === "number" ? value : 0;
         return total + num;
       }, 0);
-      this.aggregations.average = sum / this.items.length;
+
+      const avg = sum / this.items.length;
+      if (decimals === undefined) {
+        this.aggregations.average = avg;
+      } else {
+        const factor = 10 ** decimals;
+        this.aggregations.average = Math.round(avg * factor) / factor;
+      }
     }
     return this;
   }
@@ -99,12 +136,39 @@ export class AggregateQuery {
    * Multiplies values at the given paths for each item, then sums all products.
    *
    * @param paths Field paths containing numeric values to multiply
+   * @param options Optional rounding options
    * @returns this for chaining
    */
-  sumOfProducts(...paths: string[]): this {
+  sumOfProducts(...paths: string[]): this;
+  sumOfProducts(
+    ...args: [...paths: string[], options: { decimals?: number }]
+  ): this;
+  sumOfProducts(...args: Array<string | { decimals?: number }>): this {
+    const maybeOptions = args[args.length - 1];
+    const hasOptionsObject =
+      typeof maybeOptions === "object" &&
+      maybeOptions !== null &&
+      !Array.isArray(maybeOptions);
+
+    const options = hasOptionsObject
+      ? (maybeOptions as { decimals?: number })
+      : undefined;
+    const paths = (hasOptionsObject ? args.slice(0, -1) : args) as string[];
+
     if (paths.length === 0) {
       throw new Error("sumOfProducts() requires at least one path");
     }
+
+    const decimals = options?.decimals;
+    if (
+      decimals !== undefined &&
+      (!Number.isInteger(decimals) || decimals < 0 || decimals > 100)
+    ) {
+      throw new Error(
+        "sumOfProducts() options.decimals expects an integer between 0 and 100.",
+      );
+    }
+
     const productValue = this.items.reduce((sum, item) => {
       let prod = 1;
       for (const path of paths) {
@@ -119,7 +183,15 @@ export class AggregateQuery {
       }
       return sum + prod;
     }, 0);
-    this.aggregations.sumOfProducts = productValue;
+
+    if (decimals === undefined) {
+      this.aggregations.sumOfProducts = productValue;
+      return this;
+    }
+
+    const factor = 10 ** decimals;
+    this.aggregations.sumOfProducts =
+      Math.round(productValue * factor) / factor;
     return this;
   }
 

@@ -21,12 +21,24 @@ export function parseFilterExpression(expression: string): {
   value: any;
 } {
   // Match patterns like: field operator value
-  // Handles: ==, !=, >=, <=, >, <, not, contains, startsWith, endsWith
-  const match = expression.match(
-    /^\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s+(===?|!==?|>=|<=|>|<|not|contains|startsWith|endsWith)\s+(.+)$/,
+  // Handles:
+  // - Symbol operators with optional spacing: ==, !=, >=, <=, >, <
+  // - Word operators with natural spacing: not, contains, startsWith, endsWith
+  const symbolMatch = expression.match(
+    /^\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s*(===?|!==?|>=|<=|>|<)\s*(.+)$/,
   );
+  const wordMatch = expression.match(
+    /^\s*([a-zA-Z_][a-zA-Z0-9_.]*)\s+(contains|startsWith|endsWith)\s*(.+)$/i,
+  );
+  const match = symbolMatch ?? wordMatch;
 
   if (!match) {
+    if (/\bnot\b/i.test(expression)) {
+      throw new Error(
+        `Invalid filter expression: "${expression}". Binary "not" is not supported. Use "!=" instead (e.g., "status != 'Active'").`,
+      );
+    }
+
     throw new Error(
       `Invalid filter expression: "${expression}". Expected format: "field operator value" (e.g., "status == 'Active'")`,
     );
@@ -100,7 +112,6 @@ export function expressionToSiftClause(
       return { [field]: value };
     case "!=":
     case "!==":
-    case "not":
       // Handle decimal precision for numeric comparisons
       if (options?.decimals !== undefined && typeof value === "number") {
         const decimals = options.decimals;
@@ -135,12 +146,24 @@ export function expressionToSiftClause(
     case "startswith": {
       const str = String(value);
       const processed = shouldTrim ? str.trim() : str;
-      return { [field]: new RegExp(`^${escapeRegex(processed)}`, flags) };
+      const leadingBoundary = shouldTrim ? "\\s*" : "";
+      return {
+        [field]: new RegExp(
+          `^${leadingBoundary}${escapeRegex(processed)}`,
+          flags,
+        ),
+      };
     }
     case "endswith": {
       const str = String(value);
       const processed = shouldTrim ? str.trim() : str;
-      return { [field]: new RegExp(`${escapeRegex(processed)}$`, flags) };
+      const trailingBoundary = shouldTrim ? "\\s*" : "";
+      return {
+        [field]: new RegExp(
+          `${escapeRegex(processed)}${trailingBoundary}$`,
+          flags,
+        ),
+      };
     }
     default:
       throw new Error(`Unknown operator: "${operator}"`);

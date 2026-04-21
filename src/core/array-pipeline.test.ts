@@ -107,7 +107,7 @@ describe("arrayPipeline (unbound mode)", () => {
       const pipe = arrayPipeline<Item>()
         .where("type")
         .equals("Premium")
-        .sort("price", "desc")
+        .sort("price", { direction: "desc" })
         .take(2);
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(2);
@@ -165,6 +165,81 @@ describe("arrayPipeline (unbound mode)", () => {
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(4);
     });
+
+    it("supports where(path).in(values) terminal alias", () => {
+      const pipe = arrayPipeline<Item>()
+        .where("type")
+        .in(["Premium", "Standard"]);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(4);
+      expect(
+        result.every((item) => ["Premium", "Standard"].includes(item.type)),
+      ).toBe(true);
+    });
+
+    it("supports where(path).not().in(values) negated membership", () => {
+      const pipe = arrayPipeline<Item>()
+        .where("type")
+        .not()
+        .in(["Premium", "Standard"]);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe("Basic");
+    });
+
+    it("supports whereNotIn(path, values)", () => {
+      const pipe = arrayPipeline<Item>().whereNotIn("type", [
+        "Premium",
+        "Standard",
+      ]);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(1);
+      expect(result[0].type).toBe("Basic");
+    });
+
+    it("supports whereMissing(path)", () => {
+      const local = [
+        { id: 1, type: "Premium", price: 500, name: "Alpha", category: "A" },
+        { id: 2, type: "Basic", price: 50, name: "Beta" },
+      ];
+      const pipe = arrayPipeline<Item>().whereMissing("category");
+      const result = pipe.run(local).all();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(2);
+    });
+
+    it("supports whereMissing(paths[]) for multiple keys", () => {
+      const local = [
+        { id: 1, type: "Premium", price: 500, name: "Alpha", category: "A" },
+        { id: 2, type: "Basic", price: 50, name: "Beta" },
+        { id: 3, type: "Standard", price: 80, name: "Gamma", category: "B" },
+      ];
+      const pipe = arrayPipeline<Item>().whereMissing(["category"]);
+      const result = pipe.run(local).all();
+      expect(result.map((i) => i.id)).toEqual([2]);
+    });
+
+    it("supports whereExists(path)", () => {
+      const local = [
+        { id: 1, type: "Premium", price: 500, name: "Alpha", category: "A" },
+        { id: 2, type: "Basic", price: 50, name: "Beta" },
+      ];
+      const pipe = arrayPipeline<Item>().whereExists("category");
+      const result = pipe.run(local).all();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(1);
+    });
+
+    it("supports whereExists(paths[]) for multiple keys", () => {
+      const local = [
+        { id: 1, type: "Premium", price: 500, name: "Alpha", category: "A" },
+        { id: 2, type: "Basic", price: 50, name: "Beta" },
+        { id: 3, type: "Standard", price: 80, name: "Gamma", category: "B" },
+      ];
+      const pipe = arrayPipeline<Item>().whereExists(["category"]);
+      const result = pipe.run(local).all();
+      expect(result.map((i) => i.id)).toEqual([1, 3]);
+    });
   });
 
   describe("whereSift", () => {
@@ -189,11 +264,27 @@ describe("arrayPipeline (unbound mode)", () => {
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(3);
     });
+
+    it("respects ignoreCase(false) when value is provided", () => {
+      const pipe = arrayPipeline<Item>().whereIfDefined("type", "premium", {
+        ignoreCase: false,
+      });
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(0);
+    });
   });
 
   describe("whereNotIfDefined with null", () => {
     it("skips the filter when value is null", () => {
       const pipe = arrayPipeline<Item>().whereNotIfDefined("type", null);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(5);
+    });
+
+    it("respects ignoreCase(false) when value is provided", () => {
+      const pipe = arrayPipeline<Item>().whereNotIfDefined("type", "premium", {
+        ignoreCase: false,
+      });
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(5);
     });
@@ -228,6 +319,331 @@ describe("arrayPipeline (unbound mode)", () => {
       );
       const result = pipe.run(data).all();
       expect(result).toEqual(["a", "b", "c"]);
+    });
+  });
+
+  describe("expand", () => {
+    it("flattens nested arrays by path", () => {
+      const data = [
+        { id: 1, meter: [{ value: 10 }, { value: 20 }] },
+        { id: 2, meter: [{ value: 30 }] },
+      ];
+      const pipe = arrayPipeline<(typeof data)[0]>().expand("meter");
+      const result = pipe.run(data).all();
+      expect(result).toEqual([{ value: 10 }, { value: 20 }, { value: 30 }]);
+    });
+  });
+
+  describe("expand with recursive option", () => {
+    it("recursively flattens nested arrays by path", () => {
+      const data = [
+        {
+          id: 1,
+          children: [
+            { id: "a", children: [{ id: "a1", children: [] }] },
+            { id: "b", children: [] },
+          ],
+        },
+        { id: 2, children: [{ id: "c", children: [] }] },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().expand("children", {
+        recursive: true,
+      });
+      const result = pipe.run(data).all();
+      expect(result.map((node: any) => node.id)).toEqual(["a", "a1", "b", "c"]);
+    });
+
+    it("treats missing descendant path as leaf by default", () => {
+      const data = [
+        {
+          children: [{ id: "a", children: [{ id: "a1" }] }],
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().expand("children", {
+        recursive: true,
+      });
+      const result = pipe.run(data).all();
+      expect(result.map((node: any) => node.id)).toEqual(["a", "a1"]);
+    });
+
+    it("throws in strict mode when descendant path is missing/non-array", () => {
+      const data = [
+        {
+          children: [{ id: "a", children: [{ id: "a1" }] }],
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().expand("children", {
+        recursive: true,
+        strict: true,
+      });
+
+      expect(() => pipe.run(data).all()).toThrow(
+        'expand("children") expected an array at path for each descendant',
+      );
+    });
+  });
+
+  describe("setAll", () => {
+    it("sets all path occurrences immutably when replayed", () => {
+      const data = [
+        {
+          id: 1,
+          transformer: { size: { value: 10 } },
+          nested: { transformer: { size: { value: 20 } } },
+        },
+        {
+          id: 2,
+          transformer: { size: { value: 30 } },
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().setAll([
+        { path: "transformer.size.value", value: 123 },
+      ]);
+      const result = pipe.run(data).all();
+
+      expect(result[0].transformer.size.value).toBe(123);
+      expect(result[0].nested.transformer.size.value).toBe(123);
+      expect(result[1].transformer.size.value).toBe(123);
+      expect(data[0].transformer.size.value).toBe(10);
+      expect(data[0].nested!.transformer.size.value).toBe(20);
+      expect(data[1].transformer.size.value).toBe(30);
+    });
+
+    it("can be combined after filters", () => {
+      const pipe = arrayPipeline<Item>()
+        .where("type")
+        .equals("Premium")
+        .setAll([{ path: "type", value: "VIP" }], { scope: "top-level" });
+
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(3);
+      expect(result.every((item) => item.type === "VIP")).toBe(true);
+      expect(datasetA[0].type).toBe("Premium");
+    });
+
+    it("supports batch updates in one call", () => {
+      const data = [
+        {
+          id: 1,
+          type: "Premium",
+          transformer: { size: { value: 10 } },
+          nested: { transformer: { size: { value: 20 } } },
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().setAll([
+        { path: "transformer.size.value", value: 999 },
+        { path: "type", value: "VIP" },
+      ]);
+      const result = pipe.run(data).all();
+
+      expect(result[0].transformer.size.value).toBe(999);
+      expect(result[0].nested.transformer.size.value).toBe(999);
+      expect(result[0].type).toBe("VIP");
+      expect(data[0].transformer.size.value).toBe(10);
+      expect(data[0].nested!.transformer.size.value).toBe(20);
+      expect(data[0].type).toBe("Premium");
+    });
+  });
+
+  describe("setEach", () => {
+    it("returns one updated row per matched occurrence when replayed", () => {
+      const data = [
+        {
+          id: 1,
+          transformer: { size: { value: 10 } },
+          nested: { transformer: { size: { value: 20 } } },
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().setEach(
+        "transformer.size.value",
+        99,
+      );
+      const variants = pipe.run(data).all();
+
+      expect(variants).toHaveLength(2);
+      expect(variants[0].transformer.size.value).toBe(99);
+      expect(variants[0].nested.transformer.size.value).toBe(20);
+      expect(variants[1].transformer.size.value).toBe(10);
+      expect(variants[1].nested.transformer.size.value).toBe(99);
+      expect(data[0].transformer.size.value).toBe(10);
+      expect(data[0].nested.transformer.size.value).toBe(20);
+    });
+
+    it("throws when no matches are found", () => {
+      const data = [{ id: 1, type: "Premium" }];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().setEach(
+        "transformer.size.value",
+        99,
+      );
+
+      expect(() => pipe.run(data).all()).toThrow(
+        'setEach() found no matches for path "transformer.size.value".',
+      );
+    });
+  });
+
+  describe("set", () => {
+    it("sets top-level keys only when replayed", () => {
+      const data = [
+        {
+          id: 1,
+          type: "Premium",
+          nested: { type: "Inner" },
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().set("type", "VIP");
+      const result = pipe.run(data).all();
+
+      expect(result[0].type).toBe("VIP");
+      expect(result[0].nested.type).toBe("Inner");
+      expect(data[0].type).toBe("Premium");
+    });
+
+    it("supports one top-level update in one call", () => {
+      const data = [
+        {
+          id: 1,
+          type: "Premium",
+          status: "old",
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().set("type", "VIP");
+      const result = pipe.run(data).all();
+
+      expect(result[0].type).toBe("VIP");
+      expect(result[0].status).toBe("old");
+      expect(data[0].type).toBe("Premium");
+      expect(data[0].status).toBe("old");
+    });
+
+    it("throws for nested paths", () => {
+      const data = [{ id: 1, nested: { value: 1 } }];
+      const pipe = arrayPipeline<(typeof data)[0]>().set("nested.value", 2);
+      expect(() => pipe.run(data).all()).toThrow(
+        "set() only supports top-level keys",
+      );
+    });
+  });
+
+  describe("setOne", () => {
+    it("updates only first deep match when configured", () => {
+      const data = [
+        {
+          a: { value: 1 },
+          b: { value: 2 },
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().setOne("value", 8, {
+        onMultiple: "first",
+      });
+      const result = pipe.run(data).all();
+
+      expect(result[0].a.value).toBe(8);
+      expect(result[0].b.value).toBe(2);
+      expect(data[0].a.value).toBe(1);
+    });
+
+    it("throws by default when deep path has multiple matches", () => {
+      const data = [
+        {
+          a: { value: 1 },
+          b: { value: 2 },
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().setOne("value", 8);
+      expect(() => pipe.run(data).all()).toThrow("setOne() found 2 matches");
+    });
+  });
+
+  describe("replaceValue", () => {
+    it("replaces deep values when replayed", () => {
+      const data = [
+        {
+          id: 1,
+          active: true,
+          nested: { enabled: true },
+          tags: ["a", true],
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().replaceValue(true, "Y");
+      const result = pipe.run(data).all();
+
+      expect(result[0].active).toBe("Y");
+      expect(result[0].nested.enabled).toBe("Y");
+      expect(result[0].tags).toEqual(["a", "Y"]);
+      expect(data[0].active).toBe(true);
+      expect(data[0].nested.enabled).toBe(true);
+    });
+
+    it("respects keySelection include when replayed", () => {
+      const data = [
+        {
+          enabled: true,
+          active: true,
+          nested: { enabled: true, active: true },
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().replaceValue(true, "Y", {
+        keySelection: { mode: "include", keys: ["enabled"] },
+      });
+      const result = pipe.run(data).all();
+
+      expect(result[0].enabled).toBe("Y");
+      expect(result[0].nested.enabled).toBe("Y");
+      expect(result[0].active).toBe(true);
+      expect(result[0].nested.active).toBe(true);
+    });
+
+    it("applies ordered multi-rule replacement with global keySelection", () => {
+      const data = [
+        {
+          enabled: true,
+          active: false,
+          nested: { enabled: true, active: false },
+          tags: [true, false],
+        },
+      ];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().replaceMany(
+        [
+          { from: false, to: "N" },
+          { from: true, to: "Y" },
+        ],
+        {
+          keySelection: { mode: "include", keys: ["enabled"] },
+        },
+      );
+      const result = pipe.run(data).all();
+
+      expect(result[0].enabled).toBe("Y");
+      expect(result[0].nested.enabled).toBe("Y");
+      expect(result[0].active).toBe(false);
+      expect(result[0].nested.active).toBe(false);
+      expect(result[0].tags).toEqual([true, false]);
+    });
+
+    it("throws for toRoot() on unbound pipeline", () => {
+      const pipe = arrayPipeline<Item>().replaceMany([
+        { from: false, to: "N" },
+        { from: true, to: "Y" },
+      ]);
+
+      expect(() => (pipe as any).toRoot()).toThrow(
+        "toRoot() is only available on bound queries.",
+      );
     });
   });
 
@@ -326,19 +742,19 @@ describe("arrayPipeline (unbound mode)", () => {
 
   describe("filterIfAllDefined", () => {
     it("applies filter only when all params are defined", () => {
-      const pipe = arrayPipeline<Item>().filterIfAllDefined("price > 100", [
-        1,
-        "x",
-      ]);
+      const pipe = arrayPipeline<Item>().filterIfAllDefined("price > 100", {
+        min: 1,
+        tag: "x",
+      });
       const result = pipe.run(datasetA).all();
       expect(result.every((i) => i.price > 100)).toBe(true);
     });
 
     it("skips filter when any param is undefined", () => {
-      const pipe = arrayPipeline<Item>().filterIfAllDefined("price > 100", [
-        1,
-        undefined,
-      ]);
+      const pipe = arrayPipeline<Item>().filterIfAllDefined("price > 100", {
+        min: 1,
+        tag: undefined,
+      });
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(5);
     });
@@ -359,7 +775,7 @@ describe("arrayPipeline (unbound mode)", () => {
   describe("immutability", () => {
     it("pipeline steps do not leak between derived pipelines", () => {
       const base = arrayPipeline<Item>().where("type").equals("Premium");
-      const withSort = base.sort("price", "desc");
+      const withSort = base.sort("price", { direction: "desc" });
       const withTake = base.take(1);
 
       const baseResult = base.run(datasetA).all();
@@ -379,7 +795,12 @@ describe("arrayPipeline (unbound mode)", () => {
       expect(pipe.run(datasetA).count()).toBe(3);
     });
 
-    it("ne works like not().equals()", () => {
+    it("notEquals works like not().equals()", () => {
+      const pipe = arrayPipeline<Item>().where("type").notEquals("Premium");
+      expect(pipe.run(datasetA).count()).toBe(2);
+    });
+
+    it("ne works like notEquals()", () => {
       const pipe = arrayPipeline<Item>().where("type").ne("Premium");
       expect(pipe.run(datasetA).count()).toBe(2);
     });
@@ -430,6 +851,35 @@ describe("arrayPipeline (unbound mode)", () => {
       expect(result).toHaveLength(1);
       expect(result[0].name).toBe("Gamma");
     });
+
+    it("supports whereAny() for matching any exact criterion", () => {
+      const pipe = arrayPipeline<Item>().whereAny({
+        type: "Basic",
+        price: 300,
+      });
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(2);
+      expect(result.map((item) => item.id)).toEqual([2, 3]);
+    });
+
+    it("supports whereNone() for excluding all matching criteria", () => {
+      const pipe = arrayPipeline<Item>().whereNone({
+        type: "Premium",
+        name: "Delta",
+      });
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("Beta");
+    });
+
+    it("throws for empty criteria in whereAny/whereNone", () => {
+      expect(() => arrayPipeline<Item>().whereAny({})).toThrow(
+        "whereAny() requires at least one criterion.",
+      );
+      expect(() => arrayPipeline<Item>().whereNone({})).toThrow(
+        "whereNone() requires at least one criterion.",
+      );
+    });
   });
 
   describe("containsIfDefined / startsWithIfDefined / endsWithIfDefined", () => {
@@ -441,6 +891,13 @@ describe("arrayPipeline (unbound mode)", () => {
     it("applies containsIfDefined when value given", () => {
       const pipe = arrayPipeline<Item>().containsIfDefined("name", "lph");
       expect(pipe.run(datasetA).count()).toBe(1);
+    });
+
+    it("respects ignoreCase(false) in containsIfDefined", () => {
+      const pipe = arrayPipeline<Item>().containsIfDefined("name", "alpha", {
+        ignoreCase: false,
+      });
+      expect(pipe.run(datasetA).count()).toBe(0);
     });
 
     it("skips startsWithIfDefined when null", () => {
@@ -570,7 +1027,7 @@ describe("QueryResult", () => {
       .array("items")
       .where("type")
       .equals("Premium")
-      .sort("price", "desc")
+      .sort("price", { direction: "desc" })
       .all();
 
     // Strip the .all() terminal, add a different one
@@ -588,7 +1045,7 @@ describe(".run() overloads", () => {
       const pipe = arrayPipeline<Item>()
         .where("type")
         .equals("Premium")
-        .sort("price", "desc");
+        .sort("price", { direction: "desc" });
 
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(3);
@@ -610,7 +1067,9 @@ describe(".run() overloads", () => {
 
   describe("bound with recipe", () => {
     it("applies recipe steps to bound query results", () => {
-      const transform = arrayPipeline<Item>().sort("price", "desc").take(2);
+      const transform = arrayPipeline<Item>()
+        .sort("price", { direction: "desc" })
+        .take(2);
 
       const bound = query({ items: datasetA })
         .array("items")
@@ -662,7 +1121,7 @@ describe("chaining after .run()", () => {
 
   it("supports .sort() after .run()", () => {
     const pipe = arrayPipeline<Item>().where("type").equals("Premium");
-    const result = pipe.run(datasetA).sort("price", "asc").all();
+    const result = pipe.run(datasetA).sort("price", { direction: "asc" }).all();
 
     expect(result[0].price).toBe(150);
     expect(result[result.length - 1].price).toBe(500);
@@ -698,6 +1157,41 @@ describe("conditional terminals in unbound mode", () => {
 
   it(".exists() in unbound records a step", () => {
     const pipe = arrayPipeline<Item>().where("type").equals("Premium").exists();
+
+    const result = (pipe as any).run(datasetA);
+    expect(result).toBe(true);
+  });
+
+  it(".diff() in unbound records a step", () => {
+    const pipe = arrayPipeline<Item>()
+      .where("type")
+      .equals("Premium")
+      .diff(
+        { id: 1, type: "Premium", price: 500, name: "Alpha" },
+        { maxMismatches: 1 },
+      );
+
+    const result = (pipe as any).run(datasetA);
+    expect(result.equal).toBe(false);
+    expect(result.truncated).toBe(true);
+    expect(result.mismatches.length).toBe(1);
+  });
+
+  it(".hasAll() in unbound records a step", () => {
+    const pipe = arrayPipeline<Item>()
+      .where("id")
+      .equals(1)
+      .hasAll({ type: "Premium", name: "Alpha" }, { scope: "top-level" });
+
+    const result = (pipe as any).run(datasetA);
+    expect(result).toBe(true);
+  });
+
+  it(".has() in unbound records a step", () => {
+    const pipe = arrayPipeline<Item>()
+      .where("id")
+      .equals(1)
+      .has("type", "Premium", { scope: "top-level" });
 
     const result = (pipe as any).run(datasetA);
     expect(result).toBe(true);
@@ -748,7 +1242,7 @@ describe("branching from shared base", () => {
       .where("type")
       .equals("Premium");
 
-    const sorted = base.sort("price", "desc");
+    const sorted = base.sort("price", { direction: "desc" });
     const taken = base.take(1);
 
     expect(sorted.all()).toHaveLength(3);
@@ -834,7 +1328,9 @@ describe("design spec syntax examples", () => {
 
   it("Example 5: bound.run(transform)", () => {
     type I = (typeof resp.items)[0];
-    const transform = arrayPipeline<I>().sort("price", "desc").take(1);
+    const transform = arrayPipeline<I>()
+      .sort("price", { direction: "desc" })
+      .take(1);
     const top = query(resp)
       .array("items")
       .where("type")
@@ -863,7 +1359,7 @@ describe("design spec syntax examples", () => {
     const recipe = arrayPipeline<Item>()
       .where("type")
       .equals("Premium")
-      .sort("price", "desc");
+      .sort("price", { direction: "desc" });
 
     const a = recipe.run(datasetA).all();
     const b = recipe.run(datasetB).all();
@@ -896,7 +1392,9 @@ describe("design spec syntax examples", () => {
   it("Example 10: composing transform + recipe", () => {
     const filterRecipe = arrayPipeline<Item>().where("type").equals("Premium");
 
-    const sortTransform = arrayPipeline<Item>().sort("price", "asc");
+    const sortTransform = arrayPipeline<Item>().sort("price", {
+      direction: "asc",
+    });
 
     // Apply filter, then apply sort transform on the results
     const result = filterRecipe.run(datasetA).run(sortTransform).all();
@@ -908,8 +1406,8 @@ describe("design spec syntax examples", () => {
 
   it("Example 11: immutability of pipeline chains", () => {
     const base = arrayPipeline<Item>().where("type").equals("Premium");
-    const v1 = base.sort("price", "asc");
-    const v2 = base.sort("price", "desc");
+    const v1 = base.sort("price", { direction: "asc" });
+    const v2 = base.sort("price", { direction: "desc" });
 
     const r1 = v1.run(datasetA).all();
     const r2 = v2.run(datasetA).all();
