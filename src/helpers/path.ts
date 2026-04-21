@@ -6,23 +6,25 @@
 /**
  * Safely retrieves a nested value from an object using dot-path notation.
  * Supports array indices via bracket notation (e.g., "elements[2]").
- * Preserves explicit `undefined` at the final leaf when the property exists.
- * Throws an error only for missing/non-traversable path segments.
+ * Preserves explicit `undefined` at the final leaf when the property exists,
+ * unless `strict` is enabled, in which case a resolved `undefined` value throws.
  *
  * @example
  * ```ts
  * const value = getByPath({ a: { b: { c: 1 } } }, 'a.b.c'); // 1
  * const arrayItem = getByPath({ items: [1, 2, 3] }, 'items[1]'); // 2
  * getByPath({ a: { b: undefined } }, 'a.b'); // undefined
+ * getByPath({ a: { b: undefined } }, 'a.b', true); // throws error
  * getByPath({ a: {} }, 'a.b.c'); // throws error
  * ```
  *
  * @param obj - The object to read from.
  * @param path - Dot-separated path with optional bracket indices (e.g., `"customer.relationship.description"` or `"items[0].name"`).
+ * @param strict - When `true`, throws if the resolved value is `undefined`.
  * @returns The value at that path.
  * @throws Error if the path doesn't exist or is non-traversable.
  */
-export function getByPath(obj: unknown, path: string): any {
+export function getByPath(obj: unknown, path: string, strict = false): any {
   if (!path) return obj;
 
   const segments = path.split(".");
@@ -38,66 +40,6 @@ export function getByPath(obj: unknown, path: string): any {
     }
 
     // Check for array bracket notation: "items[0]" → ["items", "0"]
-    const bracketMatch = segment.match(/^(.+?)\[(\d+)\]$/);
-    if (bracketMatch) {
-      const [, key, index] = bracketMatch;
-      current = (current as any)[key];
-      if (current == null) {
-        throw new Error(
-          `Path "${path}" does not exist: null/undefined at "${key}".`,
-        );
-      }
-      if (!Array.isArray(current)) {
-        throw new Error(
-          `Path "${path}" does not exist: "${key}" is not an array.`,
-        );
-      }
-
-      const parsedIndex = parseInt(index, 10);
-      if (parsedIndex < 0 || parsedIndex >= current.length) {
-        throw new Error(
-          `Path "${path}" does not exist: index ${index} out of bounds.`,
-        );
-      }
-
-      current = current[parsedIndex];
-    } else {
-      if (!Object.prototype.hasOwnProperty.call(current as object, segment)) {
-        throw new Error(
-          `Path "${path}" does not exist: property "${segment}" not found.`,
-        );
-      }
-
-      current = (current as any)[segment];
-    }
-  }
-
-  return current;
-}
-
-/**
- * Strict nested path accessor.
- *
- * Throws when the path doesn't exist or when the resolved value is `undefined`.
- * This preserves historical fail-fast semantics used internally by query methods.
- *
- * @internal
- */
-export function getByPathStrict(obj: unknown, path: string): any {
-  if (!path) return obj;
-
-  const segments = path.split(".");
-  let current = obj;
-
-  for (let i = 0; i < segments.length; i += 1) {
-    const segment = segments[i];
-
-    if (current == null) {
-      throw new Error(
-        `Path "${path}" does not exist: null/undefined at "${segment}".`,
-      );
-    }
-
     const bracketMatch = segment.match(/^(.+?)\[(\d+)\]$/);
     if (bracketMatch) {
       const [, key, indexStr] = bracketMatch;
@@ -121,9 +63,9 @@ export function getByPathStrict(obj: unknown, path: string): any {
       }
 
       current = collection[index];
-      if (current === undefined) {
+      if (strict && current === undefined) {
         throw new Error(
-          `Path "${path}" does not exist: index ${indexStr} out of bounds.`,
+          `Path "${path}" does not exist: index ${indexStr} resolved to undefined.`,
         );
       }
       continue;
@@ -136,7 +78,7 @@ export function getByPathStrict(obj: unknown, path: string): any {
     }
 
     current = (current as any)[segment];
-    if (current === undefined) {
+    if (strict && current === undefined) {
       throw new Error(
         `Path "${path}" does not exist: property "${segment}" not found.`,
       );

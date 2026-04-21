@@ -3,7 +3,7 @@
  * @description Main query entry point and JsonQueryRoot class.
  */
 
-import { getByPathStrict } from "../helpers/path";
+import { getByPath } from "../helpers/path";
 import { setByPathStrict } from "../helpers/set-by-path";
 import { diffValues } from "../helpers/diff";
 import { hasAllInAny } from "../helpers/has-all";
@@ -115,7 +115,7 @@ export class JsonQueryRoot<TRoot> {
   array<TItem = any>(
     path: string,
   ): ArrayQuery<TItem, "bound"> & { exists: never; every: never } {
-    const v = getByPathStrict(this.root as any, path);
+    const v = getByPath(this.root as any, path, true);
     if (!Array.isArray(v)) {
       throw new Error(
         `Expected array at path "${path}", but found ${typeof v}.`,
@@ -155,7 +155,7 @@ export class JsonQueryRoot<TRoot> {
    * ```
    */
   objectGroups(path: string): ObjectGroupQuery {
-    const v = getByPathStrict(this.root as any, path);
+    const v = getByPath(this.root as any, path, true);
     if (!v || typeof v !== "object" || Array.isArray(v)) {
       throw new Error(`Expected object at path "${path}".`);
     }
@@ -232,7 +232,7 @@ export class JsonQueryRoot<TRoot> {
    * Omits object keys from the object at path and writes back immutably.
    */
   omitAt(path: string, keys: string | string[]): JsonQueryRoot<TRoot> {
-    const target = getByPathStrict(this.root as any, path);
+    const target = getByPath(this.root as any, path, true);
     if (!target || typeof target !== "object" || Array.isArray(target)) {
       throw new Error(`Expected object at path "${path}".`);
     }
@@ -250,7 +250,7 @@ export class JsonQueryRoot<TRoot> {
    * Picks object keys from the object at path and writes back immutably.
    */
   pickAt(path: string, keys: string | string[]): JsonQueryRoot<TRoot> {
-    const target = getByPathStrict(this.root as any, path);
+    const target = getByPath(this.root as any, path, true);
     if (!target || typeof target !== "object" || Array.isArray(target)) {
       throw new Error(`Expected object at path "${path}".`);
     }
@@ -271,7 +271,7 @@ export class JsonQueryRoot<TRoot> {
    * Compacts values at path and writes back immutably.
    */
   compactAt(path: string, options?: CompactOptions): JsonQueryRoot<TRoot> {
-    const target = getByPathStrict(this.root as any, path);
+    const target = getByPath(this.root as any, path, true);
     const compacted = compactValue(target, options);
     return new JsonQueryRoot(setByPathStrict(this.root, path, compacted));
   }
@@ -300,7 +300,7 @@ export class JsonQueryRoot<TRoot> {
       onExisting?: "throw" | "overwrite";
     },
   ): JsonQueryRoot<TRoot> {
-    const target = getByPathStrict(this.root as any, path);
+    const target = getByPath(this.root as any, path, true);
     if (!target || typeof target !== "object" || Array.isArray(target)) {
       throw new Error(`Expected object at path "${path}".`);
     }
@@ -343,7 +343,7 @@ export class JsonQueryRoot<TRoot> {
     path: string,
     transform: (value: TValue) => TValue,
   ): JsonQueryRoot<TRoot> {
-    const current = getByPathStrict(this.root as any, path) as TValue;
+    const current = getByPath(this.root as any, path, true) as TValue;
     const next = transform(cloneForUserFn(current));
     return new JsonQueryRoot(setByPathStrict(this.root, path, next));
   }
@@ -357,7 +357,7 @@ export class JsonQueryRoot<TRoot> {
     toValue: unknown,
     options?: ReplaceValueOptions,
   ): JsonQueryRoot<TRoot> {
-    const current = getByPathStrict(this.root as any, path);
+    const current = getByPath(this.root as any, path, true);
     const next = replaceValueByScope(current, fromValue, toValue, options);
     return new JsonQueryRoot(setByPathStrict(this.root, path, next));
   }
@@ -370,7 +370,7 @@ export class JsonQueryRoot<TRoot> {
     rules: ReadonlyArray<ReplaceRule>,
     options?: ReplaceValueOptions,
   ): JsonQueryRoot<TRoot> {
-    const current = getByPathStrict(this.root as any, path);
+    const current = getByPath(this.root as any, path, true);
     const next = replaceManyByScope(current, rules, options);
     return new JsonQueryRoot(setByPathStrict(this.root, path, next));
   }
@@ -514,7 +514,7 @@ export class JsonQueryRoot<TRoot> {
     if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
       // Object format: { outputKey: 'path' }
       for (const [key, path] of Object.entries(pathOrPaths)) {
-        result[key] = getByPathStrict(this.root as any, path);
+        result[key] = getByPath(this.root as any, path, true);
       }
     } else {
       // String or array format
@@ -522,7 +522,7 @@ export class JsonQueryRoot<TRoot> {
         ? pathOrPaths
         : [pathOrPaths, ...rest];
       for (const path of paths) {
-        result[path] = getByPathStrict(this.root as any, path);
+        result[path] = getByPath(this.root as any, path, true);
       }
     }
 
@@ -561,7 +561,7 @@ export class JsonQueryRoot<TRoot> {
           "Use recipe.run(items) or query(data).array(path).run(recipe) instead.",
       );
     }
-    const items = getByPathStrict(this.root as any, path) as TItem[];
+    const items = getByPath(this.root as any, path, true) as TItem[];
     if (!Array.isArray(items)) {
       throw new Error(`Expected array at path "${path}", got ${typeof items}.`);
     }

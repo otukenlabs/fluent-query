@@ -1,5 +1,5 @@
 import { getPathSegmentAfter, query } from "../index";
-import { getByPath, getByPathStrict, getPathSegments } from "./path";
+import { getByPath, getPathSegments } from "./path";
 
 describe("Helpers", () => {
   describe("getPathSegmentAfter()", () => {
@@ -80,6 +80,18 @@ describe("Helpers", () => {
       expect(getByPath({ items: [undefined] }, "items[0]")).toBeUndefined();
     });
 
+    it("supports strict mode for undefined leaf values", () => {
+      expect(() => getByPath({ a: { b: undefined } }, "a.b", true)).toThrow(
+        'Path "a.b" does not exist: property "b" not found.',
+      );
+    });
+
+    it("supports strict mode for in-bounds undefined array elements", () => {
+      expect(() => getByPath({ items: [undefined] }, "items[0]", true)).toThrow(
+        'Path "items[0]" does not exist: index 0 resolved to undefined.',
+      );
+    });
+
     it("throws when current becomes null/undefined", () => {
       expect(() => getByPath({ a: null }, "a.b")).toThrow(
         'Path "a.b" does not exist: null/undefined at "b".',
@@ -111,50 +123,50 @@ describe("Helpers", () => {
     });
   });
 
-  describe("getByPathStrict()", () => {
+  describe("getByPath() strict mode", () => {
     it("reads valid bracket path when value exists", () => {
       const root = { items: [{ name: "A" }, { name: "B" }] };
-      expect(getByPathStrict(root, "items[1].name")).toBe("B");
+      expect(getByPath(root, "items[1].name", true)).toBe("B");
     });
 
     it("throws when final leaf resolves to undefined", () => {
-      expect(() => getByPathStrict({ a: { b: undefined } }, "a.b")).toThrow(
+      expect(() => getByPath({ a: { b: undefined } }, "a.b", true)).toThrow(
         'Path "a.b" does not exist: property "b" not found.',
       );
     });
 
     it("throws when in-bounds array element is undefined", () => {
-      expect(() => getByPathStrict({ items: [undefined] }, "items[0]")).toThrow(
-        'Path "items[0]" does not exist: index 0 out of bounds.',
+      expect(() => getByPath({ items: [undefined] }, "items[0]", true)).toThrow(
+        'Path "items[0]" does not exist: index 0 resolved to undefined.',
       );
     });
 
     it("throws when traversing through null/undefined", () => {
-      expect(() => getByPathStrict({ a: null }, "a.b")).toThrow(
+      expect(() => getByPath({ a: null }, "a.b", true)).toThrow(
         'Path "a.b" does not exist: null/undefined at "b".',
       );
     });
 
     it("throws when bracket key does not exist", () => {
-      expect(() => getByPathStrict({} as any, "items[0]")).toThrow(
+      expect(() => getByPath({} as any, "items[0]", true)).toThrow(
         'Path "items[0]" does not exist: null/undefined at "items".',
       );
     });
 
     it("throws when bracket key is not an array", () => {
-      expect(() => getByPathStrict({ items: 123 } as any, "items[0]")).toThrow(
+      expect(() => getByPath({ items: 123 } as any, "items[0]", true)).toThrow(
         'Path "items[0]" does not exist: "items" is not an array.',
       );
     });
 
     it("throws when bracket index is out of bounds", () => {
-      expect(() => getByPathStrict({ items: [1] }, "items[2]")).toThrow(
+      expect(() => getByPath({ items: [1] }, "items[2]", true)).toThrow(
         'Path "items[2]" does not exist: index 2 out of bounds.',
       );
     });
 
     it("throws when non-bracket property is missing", () => {
-      expect(() => getByPathStrict({ a: {} }, "a.missing")).toThrow(
+      expect(() => getByPath({ a: {} }, "a.missing", true)).toThrow(
         'Path "a.missing" does not exist: property "missing" not found.',
       );
     });

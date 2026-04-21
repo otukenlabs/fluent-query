@@ -3,7 +3,7 @@
  * @description AggregateQuery helper for chainable aggregations.
  */
 
-import { getByPathStrict } from "../helpers/path";
+import { getByPath } from "../helpers/path";
 
 /**
  * Helper for chainable aggregation queries.
@@ -36,7 +36,7 @@ export class AggregateQuery {
     }
 
     const total = this.items.reduce((sum, item) => {
-      const value = path === "" ? item : getByPathStrict(item, path);
+      const value = path === "" ? item : getByPath(item, path, true);
       const num = typeof value === "number" ? value : 0;
       return sum + num;
     }, 0);
@@ -73,7 +73,7 @@ export class AggregateQuery {
       this.aggregations.average = 0;
     } else {
       const sum = this.items.reduce((total, item) => {
-        const value = path === "" ? item : getByPathStrict(item, path);
+        const value = path === "" ? item : getByPath(item, path, true);
         const num = typeof value === "number" ? value : 0;
         return total + num;
       }, 0);
@@ -100,7 +100,7 @@ export class AggregateQuery {
       this.aggregations.min = null;
     } else {
       const values = this.items
-        .map((item) => getByPathStrict(item, path))
+        .map((item) => getByPath(item, path, true))
         .filter(
           (v) => v !== null && v !== undefined && !Number.isNaN(Number(v)),
         )
@@ -121,7 +121,7 @@ export class AggregateQuery {
       this.aggregations.max = null;
     } else {
       const values = this.items
-        .map((item) => getByPathStrict(item, path))
+        .map((item) => getByPath(item, path, true))
         .filter(
           (v) => v !== null && v !== undefined && !Number.isNaN(Number(v)),
         )
@@ -172,7 +172,7 @@ export class AggregateQuery {
     const productValue = this.items.reduce((sum, item) => {
       let prod = 1;
       for (const path of paths) {
-        const value = getByPathStrict(item, path);
+        const value = getByPath(item, path, true);
         const num = Number(value);
         if (Number.isNaN(num)) {
           throw new Error(

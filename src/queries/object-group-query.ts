@@ -8,7 +8,7 @@ import { parseCompositeFilterExpression } from "../filters/logical-operators";
 import { compactValue, type CompactOptions } from "../helpers/compact";
 import { diffValues } from "../helpers/diff";
 import { hasAllInAny } from "../helpers/has-all";
-import { getByPathStrict } from "../helpers/path";
+import { getByPath } from "../helpers/path";
 import { makeRegex } from "../helpers/regex";
 import {
   replaceManyByScope,
@@ -250,9 +250,9 @@ export class ObjectGroupQuery {
 
     selectedEntries.sort((a, b) => {
       const valueA =
-        path === "" ? (a[1] as any) : getByPathStrict(a[1] as any, path);
+        path === "" ? (a[1] as any) : getByPath(a[1] as any, path, true);
       const valueB =
-        path === "" ? (b[1] as any) : getByPathStrict(b[1] as any, path);
+        path === "" ? (b[1] as any) : getByPath(b[1] as any, path, true);
 
       if (valueA === null || valueA === undefined) {
         if (valueB === null || valueB === undefined) {
@@ -306,14 +306,14 @@ export class ObjectGroupQuery {
 
       if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
         for (const [alias, path] of Object.entries(pathOrPaths)) {
-          result[alias] = getByPathStrict(groupValue as any, path);
+          result[alias] = getByPath(groupValue as any, path, true);
         }
       } else {
         const paths = Array.isArray(pathOrPaths)
           ? pathOrPaths
           : [pathOrPaths, ...additionalPaths];
         for (const path of paths) {
-          result[path] = getByPathStrict(groupValue as any, path);
+          result[path] = getByPath(groupValue as any, path, true);
         }
       }
 
@@ -567,7 +567,7 @@ export class ObjectGroupQuery {
   private flatArrayValues<TItem = any>(arrayPath: string): TItem[] {
     const results: TItem[] = [];
     for (const [key, value] of this.entries()) {
-      const arr = getByPathStrict(value as any, arrayPath);
+      const arr = getByPath(value as any, arrayPath, true);
       if (!Array.isArray(arr)) {
         throw new Error(
           `Expected array at path "${arrayPath}" in group "${key}".`,
@@ -587,7 +587,7 @@ export class ObjectGroupQuery {
   ): Array<[TItem, GroupItemMetadata]> {
     const results: Array<[TItem, GroupItemMetadata]> = [];
     for (const [key, value] of this.entries()) {
-      const arr = getByPathStrict(value as any, arrayPath);
+      const arr = getByPath(value as any, arrayPath, true);
       if (!Array.isArray(arr)) {
         throw new Error(
           `Expected array at path "${arrayPath}" in group "${key}".`,

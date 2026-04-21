@@ -9,7 +9,7 @@
 import sift from "sift";
 import { parseCompositeFilterExpression } from "../filters/logical-operators";
 import { compactValue, type CompactOptions } from "../helpers/compact";
-import { getByPath, getByPathStrict } from "../helpers/path";
+import { getByPath } from "../helpers/path";
 import { setOneByPath, type SetOneOptions } from "../helpers/set-one";
 import {
   setTopLevelValue,
@@ -257,11 +257,11 @@ export class ArrayQuery<
       const valueA =
         sortPath === ""
           ? (a.item as any)
-          : getByPathStrict(a.item as any, sortPath);
+          : getByPath(a.item as any, sortPath, true);
       const valueB =
         sortPath === ""
           ? (b.item as any)
-          : getByPathStrict(b.item as any, sortPath);
+          : getByPath(b.item as any, sortPath, true);
 
       if (valueA === null || valueA === undefined) {
         if (valueB === null || valueB === undefined) {
@@ -1012,7 +1012,7 @@ export class ArrayQuery<
     const results = this._executeFilter();
     const total = results.reduce((sum, item) => {
       const value =
-        path === "" ? (item as any) : getByPathStrict(item as any, path);
+        path === "" ? (item as any) : getByPath(item as any, path, true);
       return sum + (typeof value === "number" ? value : 0);
     }, 0);
 
@@ -1049,7 +1049,7 @@ export class ArrayQuery<
     if (results.length === 0) return 0 as any;
     const total = results.reduce((sum, item) => {
       const value =
-        path === "" ? (item as any) : getByPathStrict(item as any, path);
+        path === "" ? (item as any) : getByPath(item as any, path, true);
       return sum + (typeof value === "number" ? value : 0);
     }, 0);
 
@@ -1075,7 +1075,7 @@ export class ArrayQuery<
     if (results.length === 0) return null as any;
     const values = results
       .map((item) =>
-        path === "" ? (item as any) : getByPathStrict(item as any, path),
+        path === "" ? (item as any) : getByPath(item as any, path, true),
       )
       .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
@@ -1095,7 +1095,7 @@ export class ArrayQuery<
     if (results.length === 0) return null as any;
     const values = results
       .map((item) =>
-        path === "" ? (item as any) : getByPathStrict(item as any, path),
+        path === "" ? (item as any) : getByPath(item as any, path, true),
       )
       .filter((v) => v !== null && v !== undefined && !Number.isNaN(Number(v)))
       .map(Number);
@@ -1117,7 +1117,7 @@ export class ArrayQuery<
     return this._executeFilter().reduce((sum, item) => {
       let productValue = 1;
       for (const path of paths) {
-        const value = getByPathStrict(item as any, path);
+        const value = getByPath(item as any, path, true);
         const num = Number(value);
         if (Number.isNaN(num)) {
           throw new Error(
@@ -1155,7 +1155,7 @@ export class ArrayQuery<
     const grouped: Record<string, TItem[]> = {};
 
     for (const item of results) {
-      const groupValue = getByPathStrict(item as any, path);
+      const groupValue = getByPath(item as any, path, true);
       const key = String(groupValue);
       if (!grouped[key]) {
         grouped[key] = [];
@@ -1195,7 +1195,7 @@ export class ArrayQuery<
 
     for (const item of results) {
       const value = isDotPath
-        ? getByPathStrict(item as any, path)
+        ? getByPath(item as any, path, true)
         : this._getUniqueDeepPropertyValue(item as any, path);
       if (!seen.has(value)) {
         seen.add(value);
@@ -1337,7 +1337,7 @@ export class ArrayQuery<
         return;
       }
       if (isPath) {
-        const value = getByPathStrict(obj, pathOrProperty);
+        const value = getByPath(obj, pathOrProperty, true);
         if (value !== undefined) {
           results.push(value);
         }
@@ -1399,14 +1399,14 @@ export class ArrayQuery<
 
       if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
         for (const [key, path] of Object.entries(pathOrPaths)) {
-          result[key] = getByPathStrict(item as any, path);
+          result[key] = getByPath(item as any, path, true);
         }
       } else {
         const paths = Array.isArray(pathOrPaths)
           ? pathOrPaths
           : [pathOrPaths, ...additionalPaths];
         for (const path of paths) {
-          result[path] = getByPathStrict(item as any, path);
+          result[path] = getByPath(item as any, path, true);
         }
       }
 
@@ -1714,8 +1714,8 @@ export class ArrayQuery<
     }
     const mapped = this._executeFilter().map((item) =>
       fn(
-        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path1)),
-        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path2)),
+        ArrayQuery._cloneForUserFn(getByPath(item as any, path1, true)),
+        ArrayQuery._cloneForUserFn(getByPath(item as any, path2, true)),
       ),
     );
     return ArrayQuery._bound<TOut>(mapped, this.metadata) as any;
@@ -1733,7 +1733,7 @@ export class ArrayQuery<
     }
     const mapped = this._executeFilter().map((item) => {
       const values = paths.map((p) =>
-        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, p)),
+        ArrayQuery._cloneForUserFn(getByPath(item as any, p, true)),
       );
       return fn(...values);
     });
@@ -1774,8 +1774,8 @@ export class ArrayQuery<
       (acc, item) =>
         fn(
           acc,
-          ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path1)),
-          ArrayQuery._cloneForUserFn(getByPathStrict(item as any, path2)),
+          ArrayQuery._cloneForUserFn(getByPath(item as any, path1, true)),
+          ArrayQuery._cloneForUserFn(getByPath(item as any, path2, true)),
         ),
       init,
     ) as any;
@@ -1794,7 +1794,7 @@ export class ArrayQuery<
     }
     return this._executeFilter().reduce((acc, item) => {
       const values = paths.map((p) =>
-        ArrayQuery._cloneForUserFn(getByPathStrict(item as any, p)),
+        ArrayQuery._cloneForUserFn(getByPath(item as any, p, true)),
       );
       return fn(acc, ...values);
     }, init) as any;
@@ -1866,7 +1866,7 @@ export class ArrayQuery<
           return undefined;
         }
       }
-      return getByPathStrict(obj as any, path);
+      return getByPath(obj as any, path, true);
     };
 
     for (const item of this._executeFilter()) {
@@ -2228,7 +2228,7 @@ export class ArrayQuery<
       // Unbound: input is data
       let items: any[];
       if (this._arrayPath !== undefined) {
-        items = getByPathStrict(input, this._arrayPath);
+        items = getByPath(input, this._arrayPath, true);
         if (!Array.isArray(items)) {
           throw new Error(
             `Expected array at path "${this._arrayPath}", got ${typeof items}.`,
