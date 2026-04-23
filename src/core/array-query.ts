@@ -748,6 +748,7 @@ export class ArrayQuery<
 
   /**
    * Filters items where value at path is in the provided list.
+   * Supports numeric string coercion: in([100]) matches both 100 and "100"
    */
   whereIn(path: string, values: Primitive[]): ArrayQuery<TItem, TMode> {
     if (!Array.isArray(values) || values.length === 0) {
@@ -755,11 +756,52 @@ export class ArrayQuery<
         `whereIn("${path}") requires a non-empty array of values.`,
       );
     }
+
+    // Check if any value is a finite number - if so, support numeric string coercion
+    const hasNumericValues = values.some(
+      (v) => typeof v === "number" && Number.isFinite(v),
+    );
+
+    if (hasNumericValues) {
+      return this._pushClause({
+        $where: function (this: any) {
+          let fieldValue: any;
+          try {
+            fieldValue = path === "" ? this : this[path];
+          } catch {
+            return false;
+          }
+
+          for (const val of values) {
+            // Direct match for any value
+            if (fieldValue === val) return true;
+
+            // Numeric string coercion for numeric values in the list
+            if (typeof val === "number" && Number.isFinite(val)) {
+              if (
+                typeof fieldValue === "number" &&
+                Number.isFinite(fieldValue)
+              ) {
+                if (fieldValue === val) return true;
+              } else if (typeof fieldValue === "string") {
+                const trimmed = fieldValue.trim();
+                const parsed = Number(trimmed);
+                if (Number.isFinite(parsed) && parsed === val) return true;
+              }
+            }
+          }
+
+          return false;
+        },
+      });
+    }
+
     return this._pushClause({ [path]: { $in: values } });
   }
 
   /**
    * Filters items where value at path is NOT in the provided list.
+   * Supports numeric string coercion: notIn([100]) excludes both 100 and "100"
    */
   whereNotIn(path: string, values: Primitive[]): ArrayQuery<TItem, TMode> {
     if (!Array.isArray(values) || values.length === 0) {
@@ -767,6 +809,46 @@ export class ArrayQuery<
         `whereNotIn("${path}") requires a non-empty array of values.`,
       );
     }
+
+    // Check if any value is a finite number - if so, support numeric string coercion
+    const hasNumericValues = values.some(
+      (v) => typeof v === "number" && Number.isFinite(v),
+    );
+
+    if (hasNumericValues) {
+      return this._pushClause({
+        $where: function (this: any) {
+          let fieldValue: any;
+          try {
+            fieldValue = path === "" ? this : this[path];
+          } catch {
+            return true; // Missing field is not in the list
+          }
+
+          for (const val of values) {
+            // Direct match for any value
+            if (fieldValue === val) return false;
+
+            // Numeric string coercion for numeric values in the list
+            if (typeof val === "number" && Number.isFinite(val)) {
+              if (
+                typeof fieldValue === "number" &&
+                Number.isFinite(fieldValue)
+              ) {
+                if (fieldValue === val) return false;
+              } else if (typeof fieldValue === "string") {
+                const trimmed = fieldValue.trim();
+                const parsed = Number(trimmed);
+                if (Number.isFinite(parsed) && parsed === val) return false;
+              }
+            }
+          }
+
+          return true; // Not in the list
+        },
+      });
+    }
+
     return this._pushClause({ [path]: { $nin: values } });
   }
 

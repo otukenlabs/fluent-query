@@ -4,7 +4,12 @@
  */
 
 import { makeRegex } from "../helpers/regex";
-import type { Primitive, WhereOptions } from "../types";
+import { buildNumericComparisonClause } from "../helpers/numeric-comparison";
+import type {
+  NumericComparisonOptions,
+  Primitive,
+  WhereOptions,
+} from "../types";
 import type { ArrayQuery } from "./array-query";
 
 /**
@@ -101,8 +106,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
 
   /**
    * Exact match:
+   * - For numbers: matches both numeric values and numeric-string field values (e.g., "150.00" matches 150).
    * - For strings: uses a regex if `ignoreCase()` is enabled (so it can be case-insensitive).
-   * - For numbers/booleans: strict equality.
+   * - For booleans: strict equality.
    *
    * @example Basic usage
    * ```ts
@@ -111,6 +117,16 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .where('type')
    * .equals('Premium')
    * .all();
+   * ```
+   *
+   * @example Numeric equality with numeric strings
+   * ```ts
+   * const results = query(resp)
+   * .array('items')
+   * .where('price')
+   * .equals(150)
+   * .all();
+   * // Matches: { price: 150 }, { price: "150" }, { price: "150.00" }
    * ```
    *
    * @example With options (case-sensitive)
@@ -137,6 +153,52 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
         this.opts.trim = options.trim;
       }
     }
+
+    // Numeric equality: matches both numeric values and numeric-string field values
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const searchValue = value;
+      const path = this.path;
+      const negate = this.negate;
+
+      const numericClause = {
+        $where: function (this: any) {
+          let fieldValue: any;
+          if (path === "") {
+            fieldValue = this;
+          } else {
+            try {
+              fieldValue = this[path];
+            } catch {
+              return negate; // If error accessing field, negate determines falsy/truthy
+            }
+          }
+
+          // Nullish field values don't match positive, match negative
+          if (fieldValue === null || fieldValue === undefined) {
+            return negate;
+          }
+
+          let matches = false;
+          // Direct number match
+          if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+            matches = fieldValue === searchValue;
+          }
+          // Numeric string match
+          else if (typeof fieldValue === "string") {
+            const trimmed = fieldValue.trim();
+            const parsed = Number(trimmed);
+            if (Number.isFinite(parsed)) {
+              matches = parsed === searchValue;
+            }
+          }
+
+          return negate ? !matches : matches;
+        },
+      };
+
+      return this.parent._pushClause(numericClause);
+    }
+
     if (typeof value === "string") {
       const regex = makeRegex(value, "exact", this.opts);
       return this.parent._pushClause(
@@ -368,17 +430,28 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  greaterThan(value: number): ArrayQuery<TItem, TMode> {
+  greaterThan(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause(
-      this._buildClause(this.negate ? { $lte: value } : { $gt: value }),
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "lte" : "gt",
+        value,
+        options,
+      ),
     );
   }
 
   /**
    * Alias for {@link greaterThan}.
    */
-  gt(value: number): ArrayQuery<TItem, TMode> {
-    return this.greaterThan(value);
+  gt(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.greaterThan(value, options);
   }
 
   /**
@@ -394,17 +467,28 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  greaterThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
+  greaterThanOrEqual(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause(
-      this._buildClause(this.negate ? { $lt: value } : { $gte: value }),
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "lt" : "gte",
+        value,
+        options,
+      ),
     );
   }
 
   /**
    * Alias for {@link greaterThanOrEqual}.
    */
-  gte(value: number): ArrayQuery<TItem, TMode> {
-    return this.greaterThanOrEqual(value);
+  gte(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.greaterThanOrEqual(value, options);
   }
 
   /**
@@ -420,17 +504,28 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  lessThan(value: number): ArrayQuery<TItem, TMode> {
+  lessThan(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause(
-      this._buildClause(this.negate ? { $gte: value } : { $lt: value }),
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "gte" : "lt",
+        value,
+        options,
+      ),
     );
   }
 
   /**
    * Alias for {@link lessThan}.
    */
-  lt(value: number): ArrayQuery<TItem, TMode> {
-    return this.lessThan(value);
+  lt(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.lessThan(value, options);
   }
 
   /**
@@ -446,16 +541,27 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  lessThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
+  lessThanOrEqual(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
     return this.parent._pushClause(
-      this._buildClause(this.negate ? { $gt: value } : { $lte: value }),
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "gt" : "lte",
+        value,
+        options,
+      ),
     );
   }
 
   /**
    * Alias for {@link lessThanOrEqual}.
    */
-  lte(value: number): ArrayQuery<TItem, TMode> {
-    return this.lessThanOrEqual(value);
+  lte(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.lessThanOrEqual(value, options);
   }
 }

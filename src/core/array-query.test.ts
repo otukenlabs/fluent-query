@@ -108,6 +108,28 @@ describe("ArrayQuery", () => {
         query(testData).array("items").whereNotIn("type", []),
       ).toThrow('whereNotIn("type") requires a non-empty array of values.');
     });
+
+    it("should support numeric string coercion with numeric values", () => {
+      const result = query(testData)
+        .array("items")
+        .whereIn("price", [100, 50])
+        .all();
+
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe(1);
+      expect(result[1].id).toBe(2);
+    });
+
+    it("should support whereNotIn with numeric string coercion", () => {
+      const result = query(testData)
+        .array("items")
+        .whereNotIn("price", [100, 50])
+        .all();
+
+      expect(result).toHaveLength(2);
+      expect(result[0].id).toBe(3);
+      expect(result[1].id).toBe(4);
+    });
   });
 
   describe(".whereMissing() and .whereExists()", () => {
@@ -3040,6 +3062,60 @@ describe("ArrayQuery", () => {
         .entries();
 
       expect(filtered).toEqual([["a", { type: "Premium", priority: 3 }]]);
+    });
+
+    it("should support objectGroups().where().equals() on numeric strings", () => {
+      const root = {
+        sections: {
+          a: { price: "150.00" },
+          b: { price: 100 },
+          c: { price: "100" },
+          d: { price: null },
+        },
+      };
+
+      const filtered = query(root)
+        .objectGroups("sections")
+        .where("price")
+        .equals(100)
+        .entries();
+
+      expect(filtered).toHaveLength(2); // b and c
+      expect(filtered.map((e) => e[0])).toEqual(["b", "c"]);
+    });
+
+    it("should support objectGroups() numeric comparisons on numeric strings", () => {
+      const root = {
+        sections: {
+          a: { price: "150.0000" },
+          b: { price: "80.0000" },
+          c: { price: null },
+        },
+      };
+
+      const filtered = query(root)
+        .objectGroups("sections")
+        .where("price")
+        .greaterThan(100)
+        .entries();
+
+      expect(filtered).toEqual([["a", { price: "150.0000" }]]);
+    });
+
+    it("should throw for objectGroups() nullish numeric values when nullAsZero is disabled", () => {
+      const root = {
+        sections: {
+          a: { price: null },
+        },
+      };
+
+      expect(() =>
+        query(root)
+          .objectGroups("sections")
+          .where("price")
+          .greaterThan(100, { nullAsZero: false })
+          .entries(),
+      ).toThrow('Pass { nullAsZero: true }');
     });
 
     it("should support objectGroups().whereIn(), whereNotIn(), whereAll(), whereAny(), whereNone()", () => {

@@ -8,6 +8,7 @@ import { parseCompositeFilterExpression } from "../filters/logical-operators";
 import { compactValue, type CompactOptions } from "../helpers/compact";
 import { diffValues } from "../helpers/diff";
 import { hasAllInAny } from "../helpers/has-all";
+import { buildNumericComparisonClause } from "../helpers/numeric-comparison";
 import { getByPath } from "../helpers/path";
 import { makeRegex } from "../helpers/regex";
 import {
@@ -33,6 +34,7 @@ import type {
   FindOptions,
   GroupItemMetadata,
   HasAllOptions,
+  NumericComparisonOptions,
   Primitive,
   ReplaceRule,
   ReplaceValueOptions,
@@ -712,6 +714,51 @@ export class ObjectGroupWhereBuilder {
       }
     }
 
+    // Numeric equality: matches both numeric values and numeric-string field values
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const searchValue = value;
+      const path = this.path;
+      const negate = this.negate;
+
+      const numericClause = {
+        $where: function (this: any) {
+          let fieldValue: any;
+          if (path === "") {
+            fieldValue = this;
+          } else {
+            try {
+              fieldValue = this[path];
+            } catch {
+              return negate; // If error accessing field, negate determines falsy/truthy
+            }
+          }
+
+          // Nullish field values don't match positive, match negative
+          if (fieldValue === null || fieldValue === undefined) {
+            return negate;
+          }
+
+          let matches = false;
+          // Direct number match
+          if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+            matches = fieldValue === searchValue;
+          }
+          // Numeric string match
+          else if (typeof fieldValue === "string") {
+            const trimmed = fieldValue.trim();
+            const parsed = Number(trimmed);
+            if (Number.isFinite(parsed)) {
+              matches = parsed === searchValue;
+            }
+          }
+
+          return negate ? !matches : matches;
+        },
+      };
+
+      return this.parent._applyWhereClause(numericClause);
+    }
+
     if (typeof value === "string") {
       const regex = makeRegex(value, "exact", this.opts);
       return this.parent._applyWhereClause({
@@ -824,43 +871,75 @@ export class ObjectGroupWhereBuilder {
     });
   }
 
-  greaterThan(value: number): ObjectGroupQuery {
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $lte: value } : { $gt: value },
-    });
+  greaterThan(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ObjectGroupQuery {
+    return this.parent._applyWhereClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "lte" : "gt",
+        value,
+        options,
+      ),
+    );
   }
 
-  gt(value: number): ObjectGroupQuery {
-    return this.greaterThan(value);
+  gt(value: number, options?: NumericComparisonOptions): ObjectGroupQuery {
+    return this.greaterThan(value, options);
   }
 
-  greaterThanOrEqual(value: number): ObjectGroupQuery {
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $lt: value } : { $gte: value },
-    });
+  greaterThanOrEqual(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ObjectGroupQuery {
+    return this.parent._applyWhereClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "lt" : "gte",
+        value,
+        options,
+      ),
+    );
   }
 
-  gte(value: number): ObjectGroupQuery {
-    return this.greaterThanOrEqual(value);
+  gte(value: number, options?: NumericComparisonOptions): ObjectGroupQuery {
+    return this.greaterThanOrEqual(value, options);
   }
 
-  lessThan(value: number): ObjectGroupQuery {
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $gte: value } : { $lt: value },
-    });
+  lessThan(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ObjectGroupQuery {
+    return this.parent._applyWhereClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "gte" : "lt",
+        value,
+        options,
+      ),
+    );
   }
 
-  lt(value: number): ObjectGroupQuery {
-    return this.lessThan(value);
+  lt(value: number, options?: NumericComparisonOptions): ObjectGroupQuery {
+    return this.lessThan(value, options);
   }
 
-  lessThanOrEqual(value: number): ObjectGroupQuery {
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $gt: value } : { $lte: value },
-    });
+  lessThanOrEqual(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ObjectGroupQuery {
+    return this.parent._applyWhereClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "gt" : "lte",
+        value,
+        options,
+      ),
+    );
   }
 
-  lte(value: number): ObjectGroupQuery {
-    return this.lessThanOrEqual(value);
+  lte(value: number, options?: NumericComparisonOptions): ObjectGroupQuery {
+    return this.lessThanOrEqual(value, options);
   }
 }

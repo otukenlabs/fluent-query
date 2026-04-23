@@ -47,6 +47,117 @@ describe("WhereBuilder", () => {
         .all();
       expect(result).toHaveLength(0);
     });
+
+    it("should match numeric field value with numeric string", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "150.0000" },
+          { id: 2, price: 100 },
+          { id: 3, price: "100" },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .equals(100)
+        .all();
+      expect(result).toHaveLength(2); // items 2 and 3
+      expect(result.map((i) => i.id)).toEqual([2, 3]);
+    });
+
+    it("should match numeric-string field with numeric value", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "150.00" },
+          { id: 2, price: "100.0" },
+          { id: 3, price: 100 },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .equals(100)
+        .all();
+      expect(result).toHaveLength(2); // items 2 and 3
+    });
+
+    it("should not throw on null equality with numeric value", () => {
+      const result = query({
+        items: [
+          { id: 1, price: null },
+          { id: 2, price: 100 },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .equals(100)
+        .all();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(2);
+    });
+
+    it("should match string-to-string equality without coercion", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "150.00" },
+          { id: 2, price: "150" },
+          { id: 3, price: 150 },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .equals("150.00")
+        .all();
+      expect(result).toHaveLength(1); // only exact string match
+      expect(result[0].id).toBe(1);
+    });
+
+    it("should coerce numeric-string field when comparing with numeric value", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "150.00" },
+          { id: 2, price: "100.0" },
+          { id: 3, price: 100 },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .equals(100)
+        .all();
+      expect(result).toHaveLength(2); // items 2 and 3 (both parse to 100)
+      expect(result.map((i) => i.id)).toEqual([2, 3]);
+    });
+
+    it("should handle floating point number comparisons", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "99.99" },
+          { id: 2, price: "99.99" },
+          { id: 3, price: 99.99 },
+          { id: 4, price: "100.00" },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .equals(99.99)
+        .all();
+      expect(result).toHaveLength(3); // items 1, 2, 3
+      expect(result.map((i) => i.id)).toEqual([1, 2, 3]);
+    });
+
+    it("should handle floating point comparisons with greaterThan", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "99.50" },
+          { id: 2, price: "100.01" },
+          { id: 3, price: 100.1 },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .greaterThan(100)
+        .all();
+      expect(result).toHaveLength(2); // items 2, 3
+      expect(result.map((i) => i.id)).toEqual([2, 3]);
+    });
   });
 
   describe(".contains()", () => {
@@ -259,6 +370,62 @@ describe("WhereBuilder", () => {
         .lte(30)
         .all();
       expect(result).toHaveLength(2);
+    });
+
+    it("should compare numeric-string fields directly", () => {
+      const result = query({
+        users: [
+          { name: "Alice", price: "150.0000" },
+          { name: "Bob", price: "99.5000" },
+          { name: "Charlie", price: 120 },
+        ],
+      })
+        .array("users")
+        .where("price")
+        .greaterThan(100)
+        .all();
+
+      expect(result.map((user) => user.name)).toEqual(["Alice", "Charlie"]);
+    });
+
+    it("should treat nullish numeric fields as zero by default", () => {
+      const result = query({
+        users: [
+          { name: "Alice", price: null },
+          { name: "Bob", price: undefined },
+          { name: "Charlie", price: "2" },
+        ],
+      })
+        .array("users")
+        .where("price")
+        .lessThan(1)
+        .all();
+
+      expect(result.map((user) => user.name)).toEqual(["Alice", "Bob"]);
+    });
+
+    it("should throw for non-numeric string fields in numeric comparisons", () => {
+      expect(() =>
+        query({
+          users: [{ name: "Alice", price: "not-a-number" }],
+        })
+          .array("users")
+          .where("price")
+          .greaterThan(100)
+          .all(),
+      ).toThrow('requires a number or numeric string');
+    });
+
+    it("should allow nullish handling to be switched to throwing", () => {
+      expect(() =>
+        query({
+          users: [{ name: "Alice", price: null }],
+        })
+          .array("users")
+          .where("price")
+          .greaterThan(100, { nullAsZero: false })
+          .all(),
+      ).toThrow('Pass { nullAsZero: true }');
     });
 
     it("should support in() as whereIn() terminal alias", () => {

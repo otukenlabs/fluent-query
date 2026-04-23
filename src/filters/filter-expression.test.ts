@@ -116,18 +116,60 @@ describe("filter-expression utilities", () => {
     });
 
     it("handles direct comparison operators", () => {
-      expect(expressionToSiftClause("x", "==", 1)).toEqual({ x: 1 });
-      expect(expressionToSiftClause("x", "!=", 1)).toEqual({
-        x: { $ne: 1 },
-      });
-      expect(expressionToSiftClause("x", ">", 1)).toEqual({ x: { $gt: 1 } });
-      expect(expressionToSiftClause("x", ">=", 1)).toEqual({
-        x: { $gte: 1 },
-      });
-      expect(expressionToSiftClause("x", "<", 1)).toEqual({ x: { $lt: 1 } });
-      expect(expressionToSiftClause("x", "<=", 1)).toEqual({
-        x: { $lte: 1 },
-      });
+      // With numeric-string support, ==, !=, >, >=, <, <= all use $where for coercion
+      const eqClause = expressionToSiftClause("x", "==", 1);
+      expect(typeof eqClause.x.$where).toBe("function");
+      expect(eqClause.x.$where.call({ x: 1 })).toBe(true);
+      expect(eqClause.x.$where.call({ x: "1" })).toBe(true);
+      expect(eqClause.x.$where.call({ x: 2 })).toBe(false);
+
+      const neqClause = expressionToSiftClause("x", "!=", 1);
+      expect(typeof neqClause.x.$where).toBe("function");
+      expect(neqClause.x.$where.call({ x: 1 })).toBe(false);
+      expect(neqClause.x.$where.call({ x: "1" })).toBe(false);
+      expect(neqClause.x.$where.call({ x: 2 })).toBe(true);
+
+      // Greater-than operators with numeric strings
+      const gtClause = expressionToSiftClause("x", ">", 5);
+      expect(typeof gtClause.$where).toBe("function");
+      expect(gtClause.$where.call({ x: 10 })).toBe(true);
+      expect(gtClause.$where.call({ x: "10" })).toBe(true);
+      expect(gtClause.$where.call({ x: "10.5" })).toBe(true);
+      expect(gtClause.$where.call({ x: 3 })).toBe(false);
+      expect(gtClause.$where.call({ x: "3" })).toBe(false);
+
+      const gteClause = expressionToSiftClause("x", ">=", 5);
+      expect(typeof gteClause.$where).toBe("function");
+      expect(gteClause.$where.call({ x: 5 })).toBe(true);
+      expect(gteClause.$where.call({ x: "5" })).toBe(true);
+      expect(gteClause.$where.call({ x: 3 })).toBe(false);
+
+      // Less-than operators with numeric strings
+      const ltClause = expressionToSiftClause("x", "<", 5);
+      expect(typeof ltClause.$where).toBe("function");
+      expect(ltClause.$where.call({ x: 3 })).toBe(true);
+    });
+
+    it("handles string-to-string equality without numeric coercion", () => {
+      // When comparing two strings (simple equality, no $where)
+      const clause = expressionToSiftClause("price", "==", "150.00");
+      expect(clause.price).toBe("150.00"); // direct value assignment
+    });
+
+    it("handles numeric comparison with string field values", () => {
+      // Numeric comparison creates $where for coercion
+      const clause = expressionToSiftClause("price", "==", 100);
+      expect(typeof clause.price.$where).toBe("function");
+      expect(clause.price.$where.call({ price: "100.00" })).toBe(true);
+      expect(clause.price.$where.call({ price: "100" })).toBe(true);
+      expect(clause.price.$where.call({ price: 100 })).toBe(true);
+      expect(clause.price.$where.call({ price: "100.01" })).toBe(false);
+
+      const lteClause = expressionToSiftClause("x", "<=", 5);
+      expect(typeof lteClause.$where).toBe("function");
+      expect(lteClause.$where.call({ x: 5 })).toBe(true);
+      expect(lteClause.$where.call({ x: "5" })).toBe(true);
+      expect(lteClause.$where.call({ x: 10 })).toBe(false);
     });
 
     it("builds regex clauses with trim/ignoreCase options", () => {
@@ -222,7 +264,11 @@ describe("filter-expression utilities", () => {
 
     it("parses a single expression", () => {
       const clause = parseCompositeFilterExpression("age >= 21");
-      expect(clause).toEqual({ age: { $gte: 21 } });
+      // Numeric comparison operators now use $where for string coercion
+      expect(typeof clause.$where).toBe("function");
+      expect(clause.$where.call({ age: 21 })).toBe(true);
+      expect(clause.$where.call({ age: "21" })).toBe(true);
+      expect(clause.$where.call({ age: 20 })).toBe(false);
     });
 
     it("parses mixed and/or with precedence", () => {
@@ -230,22 +276,25 @@ describe("filter-expression utilities", () => {
         "city == 'NY' and age >= 21 or active == true",
       );
 
-      expect(clause).toEqual({
-        $or: [
-          {
-            $and: [{ city: "NY" }, { age: { $gte: 21 } }],
-          },
-          { active: true },
-        ],
-      });
+      // Validate structure has the $or and $and operators
+      expect(clause.$or).toBeDefined();
+      expect(clause.$or).toHaveLength(2);
+      expect(clause.$or[0].$and).toBeDefined();
+      // First branch: city == 'NY' and age >= 21
+      expect(clause.$or[0].$and[0].city).toBe("NY");
+      expect(typeof clause.$or[0].$and[1].$where).toBe("function");
+      // Second branch: active == true
+      expect(clause.$or[1].active).toBe(true);
     });
 
     it("parses composite expressions without strict spacing around operators", () => {
       const clause = parseCompositeFilterExpression("city=='NY'and age>=21");
 
-      expect(clause).toEqual({
-        $and: [{ city: "NY" }, { age: { $gte: 21 } }],
-      });
+      expect(clause.$and).toBeDefined();
+      expect(clause.$and).toHaveLength(2);
+      expect(clause.$and[0].city).toBe("NY");
+      expect(typeof clause.$and[1].$where).toBe("function");
+      expect(clause.$and[1].$where.call({ age: 21 })).toBe(true);
     });
 
     it("supports unary logical not with keyword and parentheses", () => {
@@ -253,13 +302,11 @@ describe("filter-expression utilities", () => {
         "not (city == 'NY' and age >= 21)",
       );
 
-      expect(clause).toEqual({
-        $nor: [
-          {
-            $and: [{ city: "NY" }, { age: { $gte: 21 } }],
-          },
-        ],
-      });
+      expect(clause.$nor).toBeDefined();
+      expect(clause.$nor).toHaveLength(1);
+      expect(clause.$nor[0].$and).toBeDefined();
+      expect(clause.$nor[0].$and[0].city).toBe("NY");
+      expect(typeof clause.$nor[0].$and[1].$where).toBe("function");
     });
 
     it("supports unary logical ! and symbol logical operators", () => {
@@ -267,18 +314,13 @@ describe("filter-expression utilities", () => {
         "!(city=='NY' && age>=21) || active==true",
       );
 
-      expect(clause).toEqual({
-        $or: [
-          {
-            $nor: [
-              {
-                $and: [{ city: "NY" }, { age: { $gte: 21 } }],
-              },
-            ],
-          },
-          { active: true },
-        ],
-      });
+      expect(clause.$or).toBeDefined();
+      expect(clause.$or).toHaveLength(2);
+      expect(clause.$or[0].$nor).toBeDefined();
+      expect(clause.$or[0].$nor[0].$and).toBeDefined();
+      expect(clause.$or[0].$nor[0].$and[0].city).toBe("NY");
+      expect(typeof clause.$or[0].$nor[0].$and[1].$where).toBe("function");
+      expect(clause.$or[1].active).toBe(true);
     });
 
     it("applies precedence: not > and > or", () => {
@@ -286,14 +328,13 @@ describe("filter-expression utilities", () => {
         "not city == 'NY' and age >= 21 or active == true",
       );
 
-      expect(clause).toEqual({
-        $or: [
-          {
-            $and: [{ $nor: [{ city: "NY" }] }, { age: { $gte: 21 } }],
-          },
-          { active: true },
-        ],
-      });
+      expect(clause.$or).toBeDefined();
+      expect(clause.$or).toHaveLength(2);
+      expect(clause.$or[0].$and).toBeDefined();
+      expect(clause.$or[0].$and[0].$nor).toBeDefined();
+      expect(clause.$or[0].$and[0].$nor[0].city).toBe("NY");
+      expect(typeof clause.$or[0].$and[1].$where).toBe("function");
+      expect(clause.$or[1].active).toBe(true);
     });
 
     it("throws on mismatched parentheses", () => {

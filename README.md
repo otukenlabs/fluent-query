@@ -70,6 +70,19 @@ const stats = query({ prices: [9.99, 10.01, 14.5, 20] })
   .greaterThan(10)
   .sum("", { decimals: 2 });
 
+// Numeric-string fields are compared as numbers
+const expensive = query({
+  items: [
+    { price: "150.0000" },
+    { price: "80.0000" },
+    { price: null },
+  ],
+})
+  .array("items")
+  .where("price")
+  .greaterThan(100)
+  .all();
+
 // Root write-back
 const updated = query(data)
   .array("devices")
@@ -108,6 +121,20 @@ Full method reference (including options, aliases, and advanced operators):
 ```typescript
 .where('name').equals('john', { ignoreCase: true, trim: true })
 .filter('name contains john', { ignoreCase: true, trim: true })
+```
+
+### Numeric Comparison Options
+
+```typescript
+// Numeric strings like "150.0000" are parsed automatically.
+// null/undefined are treated as 0 by default.
+query(data).array("items").where("price").greaterThan(100)
+
+// Opt into strict nullish handling.
+query(data)
+  .array("items")
+  .where("price")
+  .greaterThan(100, { nullAsZero: false })
 ```
 
 ### Filter Expression Logic

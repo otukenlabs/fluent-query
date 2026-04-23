@@ -92,13 +92,13 @@ export function expressionToSiftClause(
   switch (operator) {
     case "==":
     case "===":
-      // Handle decimal precision for numeric comparisons
+      // Keep decimal precision behavior as-is when decimals option is provided
       if (options?.decimals !== undefined && typeof value === "number") {
         const decimals = options.decimals;
         return {
           [field]: {
             $where: function (this: any) {
-              const fieldValue = this[field];
+              const fieldValue = this?.[field];
               if (typeof fieldValue !== "number") return false;
               const rounded1 =
                 Math.round(fieldValue * 10 ** decimals) / 10 ** decimals;
@@ -109,16 +109,49 @@ export function expressionToSiftClause(
           },
         };
       }
+
+      // For numeric values WITHOUT decimals, support numeric-string coercion
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return {
+          [field]: {
+            $where: function (this: any) {
+              const fieldValue = this?.[field];
+
+              // Nullish field values don't match
+              if (fieldValue === null || fieldValue === undefined) {
+                return false;
+              }
+
+              // Direct number match
+              if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+                return fieldValue === value;
+              }
+
+              // Numeric string match
+              if (typeof fieldValue === "string") {
+                const trimmed = fieldValue.trim();
+                const parsed = Number(trimmed);
+                if (Number.isFinite(parsed)) {
+                  return parsed === value;
+                }
+              }
+
+              return false;
+            },
+          },
+        };
+      }
+
       return { [field]: value };
     case "!=":
     case "!==":
-      // Handle decimal precision for numeric comparisons
+      // Keep decimal precision behavior as-is when decimals option is provided
       if (options?.decimals !== undefined && typeof value === "number") {
         const decimals = options.decimals;
         return {
           [field]: {
             $where: function (this: any) {
-              const fieldValue = this[field];
+              const fieldValue = this?.[field];
               if (typeof fieldValue !== "number") return true;
               const rounded1 =
                 Math.round(fieldValue * 10 ** decimals) / 10 ** decimals;
@@ -129,14 +162,168 @@ export function expressionToSiftClause(
           },
         };
       }
+
+      // For numeric values WITHOUT decimals, support numeric-string coercion
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return {
+          [field]: {
+            $where: function (this: any) {
+              const fieldValue = this?.[field];
+
+              // Nullish field values don't match (treated as not equal)
+              if (fieldValue === null || fieldValue === undefined) {
+                return true;
+              }
+
+              // Direct number match
+              if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+                return fieldValue !== value;
+              }
+
+              // Numeric string match
+              if (typeof fieldValue === "string") {
+                const trimmed = fieldValue.trim();
+                const parsed = Number(trimmed);
+                if (Number.isFinite(parsed)) {
+                  return parsed !== value;
+                }
+              }
+
+              // Non-numeric values are not equal to the number
+              return true;
+            },
+          },
+        };
+      }
+
       return { [field]: { $ne: value } };
     case ">":
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return {
+          $where: function (this: any) {
+            let fieldValue: any;
+            try {
+              fieldValue = field === "" ? this : this[field];
+            } catch {
+              return false;
+            }
+
+            if (fieldValue === null || fieldValue === undefined) {
+              return false;
+            }
+
+            if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+              return fieldValue > value;
+            }
+
+            if (typeof fieldValue === "string") {
+              const trimmed = fieldValue.trim();
+              const parsed = Number(trimmed);
+              if (Number.isFinite(parsed)) {
+                return parsed > value;
+              }
+            }
+
+            return false;
+          },
+        };
+      }
       return { [field]: { $gt: value } };
     case ">=":
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return {
+          $where: function (this: any) {
+            let fieldValue: any;
+            try {
+              fieldValue = field === "" ? this : this[field];
+            } catch {
+              return false;
+            }
+
+            if (fieldValue === null || fieldValue === undefined) {
+              return false;
+            }
+
+            if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+              return fieldValue >= value;
+            }
+
+            if (typeof fieldValue === "string") {
+              const trimmed = fieldValue.trim();
+              const parsed = Number(trimmed);
+              if (Number.isFinite(parsed)) {
+                return parsed >= value;
+              }
+            }
+
+            return false;
+          },
+        };
+      }
       return { [field]: { $gte: value } };
     case "<":
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return {
+          $where: function (this: any) {
+            let fieldValue: any;
+            try {
+              fieldValue = field === "" ? this : this[field];
+            } catch {
+              return false;
+            }
+
+            if (fieldValue === null || fieldValue === undefined) {
+              return false;
+            }
+
+            if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+              return fieldValue < value;
+            }
+
+            if (typeof fieldValue === "string") {
+              const trimmed = fieldValue.trim();
+              const parsed = Number(trimmed);
+              if (Number.isFinite(parsed)) {
+                return parsed < value;
+              }
+            }
+
+            return false;
+          },
+        };
+      }
       return { [field]: { $lt: value } };
     case "<=":
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return {
+          $where: function (this: any) {
+            let fieldValue: any;
+            try {
+              fieldValue = field === "" ? this : this[field];
+            } catch {
+              return false;
+            }
+
+            if (fieldValue === null || fieldValue === undefined) {
+              return false;
+            }
+
+            if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+              return fieldValue <= value;
+            }
+
+            if (typeof fieldValue === "string") {
+              const trimmed = fieldValue.trim();
+              const parsed = Number(trimmed);
+              if (Number.isFinite(parsed)) {
+                return parsed <= value;
+              }
+            }
+
+            return false;
+          },
+        };
+      }
       return { [field]: { $lte: value } };
     case "contains": {
       const str = String(value);

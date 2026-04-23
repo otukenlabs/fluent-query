@@ -38,6 +38,18 @@ export type WhereOptions = {
 };
 
 /**
+ * Options for numeric comparisons such as `greaterThan()` and `lessThan()`.
+ */
+export type NumericComparisonOptions = {
+  /**
+   * When true, `null` and `undefined` values are treated as `0`.
+   *
+   * @defaultValue `true`
+   */
+  nullAsZero?: boolean;
+};
+
+/**
  * Metadata for tracking an item's source within a groups hierarchy.
  */
 export type GroupItemMetadata = {

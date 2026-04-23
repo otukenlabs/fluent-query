@@ -197,6 +197,21 @@ describe("arrayPipeline (unbound mode)", () => {
       expect(result[0].type).toBe("Basic");
     });
 
+    it("supports whereIn with numeric string coercion", () => {
+      // With datasetA: 1(500), 2(50), 3(300), 4(100), 5(150)
+      const pipe = arrayPipeline<Item>().whereIn("price", [100, 50]);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(2);
+      expect(result.map((x) => x.id)).toEqual([2, 4]);
+    });
+
+    it("supports whereNotIn with numeric string coercion", () => {
+      const pipe = arrayPipeline<Item>().whereNotIn("price", [100, 50]);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(3);
+      expect(result.map((x) => x.id)).toEqual([1, 3, 5]);
+    });
+
     it("supports whereMissing(path)", () => {
       const local = [
         { id: 1, type: "Premium", price: 500, name: "Alpha", category: "A" },
@@ -287,6 +302,21 @@ describe("arrayPipeline (unbound mode)", () => {
       });
       const result = pipe.run(datasetA).all();
       expect(result).toHaveLength(5);
+    });
+
+    it("supports numeric string coercion with whereIfDefined", () => {
+      // datasetA has prices: 500, 50, 300, 100, 150
+      const pipe = arrayPipeline<Item>().whereIfDefined("price", 100);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(4);
+    });
+
+    it("supports numeric string coercion with whereNotIfDefined", () => {
+      const pipe = arrayPipeline<Item>().whereNotIfDefined("price", 100);
+      const result = pipe.run(datasetA).all();
+      expect(result).toHaveLength(4);
+      expect(result.map((x) => x.id)).toEqual([1, 2, 3, 5]);
     });
   });
 
