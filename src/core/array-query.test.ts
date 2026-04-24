@@ -677,6 +677,42 @@ describe("ArrayQuery", () => {
       });
       expect(result).toBe(3.01);
     });
+
+    it("should support pre-rounding values before sum", () => {
+      const result = query([0.333, 0.333, 0.333]).arrayRoot<number>().sum("", {
+        preRoundDecimals: 2,
+      });
+      expect(result).toBe(0.99);
+    });
+
+    it("should support pre-round half-even mode before sum", () => {
+      const halfEven = query([1.5, 2.5]).arrayRoot<number>().sum("", {
+        preRoundDecimals: 0,
+        preRoundMode: "halfEven",
+      });
+      const halfUp = query([1.5, 2.5]).arrayRoot<number>().sum("", {
+        preRoundDecimals: 0,
+        preRoundMode: "halfUp",
+      });
+
+      expect(halfEven).toBe(4);
+      expect(halfUp).toBe(5);
+    });
+
+    it("should support final half-even decimal rounding for sum", () => {
+      const result = query([1.25]).arrayRoot<number>().sum("", {
+        decimals: 1,
+        finalRoundMode: "halfEven",
+      });
+      expect(result).toBe(1.2);
+    });
+
+    it("should support final significant-digit rounding for sum", () => {
+      const result = query([123.4, 0.567]).arrayRoot<number>().sum("", {
+        finalRoundSignificantDigits: 3,
+      });
+      expect(result).toBe(124);
+    });
   });
 
   describe(".average()", () => {
@@ -725,6 +761,35 @@ describe("ArrayQuery", () => {
         decimals: 0,
       });
       expect(result).toBe(2);
+    });
+
+    it("should support pre-rounding values before average", () => {
+      const result = query([1.44, 1.45]).arrayRoot<number>().average("", {
+        preRoundDecimals: 1,
+      });
+      expect(result).toBe(1.45);
+    });
+
+    it("should support significant-digit pre-rounding before average", () => {
+      const result = query([12.34, 98.76]).arrayRoot<number>().average("", {
+        preRoundSignificantDigits: 2,
+      });
+      expect(result).toBe(55.5);
+    });
+
+    it("should support final half-even decimal rounding for average", () => {
+      const result = query([1, 1.5]).arrayRoot<number>().average("", {
+        decimals: 0,
+        finalRoundMode: "halfEven",
+      });
+      expect(result).toBe(1);
+    });
+
+    it("should support final significant-digit rounding for average", () => {
+      const result = query([12.34, 98.76]).arrayRoot<number>().average("", {
+        finalRoundSignificantDigits: 2,
+      });
+      expect(result).toBe(56);
     });
   });
 
@@ -2695,6 +2760,78 @@ describe("ArrayQuery", () => {
       ).toThrow(
         "sumOfProducts() options.decimals expects an integer between 0 and 100.",
       );
+
+      expect(() =>
+        query([1]).arrayRoot<number>().sum("", {
+          preRoundDecimals: 2,
+          preRoundSignificantDigits: 2,
+        }),
+      ).toThrow(
+        "sum() options.preRoundDecimals and options.preRoundSignificantDigits are mutually exclusive.",
+      );
+
+      expect(() =>
+        query([1]).arrayRoot<number>().average("", {
+          preRoundDecimals: -1,
+        }),
+      ).toThrow(
+        "average() options.preRoundDecimals expects an integer between 0 and 100.",
+      );
+
+      expect(() =>
+        query([1]).arrayRoot<number>().average("", {
+          preRoundSignificantDigits: 0,
+        }),
+      ).toThrow(
+        "average() options.preRoundSignificantDigits expects an integer between 1 and 100.",
+      );
+
+      expect(() =>
+        query([1]).arrayRoot<number>().sum("", {
+          decimals: 2,
+          finalRoundSignificantDigits: 3,
+        }),
+      ).toThrow(
+        "sum() options.decimals and options.finalRoundSignificantDigits are mutually exclusive.",
+      );
+
+      expect(() =>
+        query([1]).arrayRoot<number>().average("", {
+          finalRoundSignificantDigits: 0,
+        }),
+      ).toThrow(
+        "average() options.finalRoundSignificantDigits expects an integer between 1 and 100.",
+      );
+    });
+
+    it("should support aggregate() pre-rounding options for scientific-style workflows", () => {
+      const sumStats = query([0.333, 0.333, 0.333])
+        .arrayRoot<number>()
+        .aggregate()
+        .sum("", { preRoundDecimals: 2 })
+        .all();
+
+      expect(sumStats).toEqual({ sum: 0.99 });
+
+      const averageStats = query([1.5, 2.5])
+        .arrayRoot<number>()
+        .aggregate()
+        .average("", { preRoundDecimals: 0, preRoundMode: "halfEven" })
+        .all();
+
+      expect(averageStats).toEqual({ average: 2 });
+
+      const finalRoundStats = query([123.4, 0.567])
+        .arrayRoot<number>()
+        .aggregate()
+        .sum("", { finalRoundSignificantDigits: 3 })
+        .average("", { decimals: 0, finalRoundMode: "halfEven" })
+        .all();
+
+      expect(finalRoundStats).toEqual({
+        sum: 124,
+        average: 62,
+      });
     });
   });
 

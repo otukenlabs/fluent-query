@@ -1143,7 +1143,15 @@ export class ArrayQuery<
    */
   sum(
     path: string = "",
-    options?: { decimals?: number; coerceNumericStrings?: boolean },
+    options?: {
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+      preRoundDecimals?: number;
+      preRoundSignificantDigits?: number;
+      preRoundMode?: "halfUp" | "halfEven";
+      finalRoundSignificantDigits?: number;
+      finalRoundMode?: "halfUp" | "halfEven";
+    },
   ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("sum", path, options) as any;
@@ -1159,6 +1167,103 @@ export class ArrayQuery<
       );
     }
 
+    const preRoundDecimals = options?.preRoundDecimals;
+    if (
+      preRoundDecimals !== undefined &&
+      (!Number.isInteger(preRoundDecimals) ||
+        preRoundDecimals < 0 ||
+        preRoundDecimals > 100)
+    ) {
+      throw new Error(
+        "sum() options.preRoundDecimals expects an integer between 0 and 100.",
+      );
+    }
+
+    const preRoundSignificantDigits = options?.preRoundSignificantDigits;
+    if (
+      preRoundSignificantDigits !== undefined &&
+      (!Number.isInteger(preRoundSignificantDigits) ||
+        preRoundSignificantDigits < 1 ||
+        preRoundSignificantDigits > 100)
+    ) {
+      throw new Error(
+        "sum() options.preRoundSignificantDigits expects an integer between 1 and 100.",
+      );
+    }
+
+    if (
+      preRoundDecimals !== undefined &&
+      preRoundSignificantDigits !== undefined
+    ) {
+      throw new Error(
+        "sum() options.preRoundDecimals and options.preRoundSignificantDigits are mutually exclusive.",
+      );
+    }
+
+    const preRoundMode = options?.preRoundMode ?? "halfUp";
+    const finalRoundSignificantDigits = options?.finalRoundSignificantDigits;
+    if (
+      finalRoundSignificantDigits !== undefined &&
+      (!Number.isInteger(finalRoundSignificantDigits) ||
+        finalRoundSignificantDigits < 1 ||
+        finalRoundSignificantDigits > 100)
+    ) {
+      throw new Error(
+        "sum() options.finalRoundSignificantDigits expects an integer between 1 and 100.",
+      );
+    }
+
+    if (decimals !== undefined && finalRoundSignificantDigits !== undefined) {
+      throw new Error(
+        "sum() options.decimals and options.finalRoundSignificantDigits are mutually exclusive.",
+      );
+    }
+
+    const finalRoundMode = options?.finalRoundMode ?? "halfUp";
+
+    const roundHalfEven = (value: number): number => {
+      const absValue = Math.abs(value);
+      const lower = Math.floor(absValue);
+      const fraction = absValue - lower;
+      const epsilon = 1e-12;
+
+      let roundedInt: number;
+      if (fraction > 0.5 + epsilon) {
+        roundedInt = lower + 1;
+      } else if (fraction < 0.5 - epsilon) {
+        roundedInt = lower;
+      } else {
+        roundedInt = lower % 2 === 0 ? lower : lower + 1;
+      }
+
+      return Math.sign(value) * roundedInt;
+    };
+
+    const preRoundNumericValue = (value: number): number => {
+      if (preRoundDecimals !== undefined) {
+        const factor = 10 ** preRoundDecimals;
+        if (preRoundMode === "halfEven") {
+          return roundHalfEven(value * factor) / factor;
+        }
+        return Math.round(value * factor) / factor;
+      }
+
+      if (preRoundSignificantDigits !== undefined) {
+        if (preRoundMode === "halfEven") {
+          if (value === 0) return 0;
+
+          const exponent = Math.floor(Math.log10(Math.abs(value)));
+          const scale = 10 ** (preRoundSignificantDigits - 1 - exponent);
+          const scaled = value * scale;
+          const roundedScaled = roundHalfEven(scaled);
+          return roundedScaled / scale;
+        }
+        return Number(value.toPrecision(preRoundSignificantDigits));
+      }
+
+      return value;
+    };
+
     const results = this._executeFilter();
     const total = results.reduce((sum, item) => {
       const value =
@@ -1167,26 +1272,52 @@ export class ArrayQuery<
         options?.coerceNumericStrings !== false;
 
       if (typeof value === "number" && Number.isFinite(value)) {
-        return sum + value;
+        return sum + preRoundNumericValue(value);
       }
 
       if (shouldCoerceNumericStrings && typeof value === "string") {
         const trimmed = value.trim();
         const parsed = Number(trimmed);
         if (trimmed !== "" && Number.isFinite(parsed)) {
-          return sum + parsed;
+          return sum + preRoundNumericValue(parsed);
         }
       }
 
       return sum;
     }, 0);
 
+    const roundToDecimals = (value: number, roundDecimals: number): number => {
+      const factor = 10 ** roundDecimals;
+      if (finalRoundMode === "halfEven") {
+        return roundHalfEven(value * factor) / factor;
+      }
+      return Math.round(value * factor) / factor;
+    };
+
+    const roundToSignificant = (
+      value: number,
+      significantDigits: number,
+    ): number => {
+      if (value === 0) return 0;
+      if (finalRoundMode === "halfEven") {
+        const exponent = Math.floor(Math.log10(Math.abs(value)));
+        const scale = 10 ** (significantDigits - 1 - exponent);
+        const scaled = value * scale;
+        const roundedScaled = roundHalfEven(scaled);
+        return roundedScaled / scale;
+      }
+      return Number(value.toPrecision(significantDigits));
+    };
+
+    if (finalRoundSignificantDigits !== undefined) {
+      return roundToSignificant(total, finalRoundSignificantDigits) as any;
+    }
+
     if (decimals === undefined) {
       return total as any;
     }
 
-    const factor = 10 ** decimals;
-    return (Math.round(total * factor) / factor) as any;
+    return roundToDecimals(total, decimals) as any;
   }
 
   /**
@@ -1194,7 +1325,15 @@ export class ArrayQuery<
    */
   average(
     path: string = "",
-    options?: { decimals?: number; coerceNumericStrings?: boolean },
+    options?: {
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+      preRoundDecimals?: number;
+      preRoundSignificantDigits?: number;
+      preRoundMode?: "halfUp" | "halfEven";
+      finalRoundSignificantDigits?: number;
+      finalRoundMode?: "halfUp" | "halfEven";
+    },
   ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("average", path, options) as any;
@@ -1210,6 +1349,103 @@ export class ArrayQuery<
       );
     }
 
+    const preRoundDecimals = options?.preRoundDecimals;
+    if (
+      preRoundDecimals !== undefined &&
+      (!Number.isInteger(preRoundDecimals) ||
+        preRoundDecimals < 0 ||
+        preRoundDecimals > 100)
+    ) {
+      throw new Error(
+        "average() options.preRoundDecimals expects an integer between 0 and 100.",
+      );
+    }
+
+    const preRoundSignificantDigits = options?.preRoundSignificantDigits;
+    if (
+      preRoundSignificantDigits !== undefined &&
+      (!Number.isInteger(preRoundSignificantDigits) ||
+        preRoundSignificantDigits < 1 ||
+        preRoundSignificantDigits > 100)
+    ) {
+      throw new Error(
+        "average() options.preRoundSignificantDigits expects an integer between 1 and 100.",
+      );
+    }
+
+    if (
+      preRoundDecimals !== undefined &&
+      preRoundSignificantDigits !== undefined
+    ) {
+      throw new Error(
+        "average() options.preRoundDecimals and options.preRoundSignificantDigits are mutually exclusive.",
+      );
+    }
+
+    const preRoundMode = options?.preRoundMode ?? "halfUp";
+    const finalRoundSignificantDigits = options?.finalRoundSignificantDigits;
+    if (
+      finalRoundSignificantDigits !== undefined &&
+      (!Number.isInteger(finalRoundSignificantDigits) ||
+        finalRoundSignificantDigits < 1 ||
+        finalRoundSignificantDigits > 100)
+    ) {
+      throw new Error(
+        "average() options.finalRoundSignificantDigits expects an integer between 1 and 100.",
+      );
+    }
+
+    if (decimals !== undefined && finalRoundSignificantDigits !== undefined) {
+      throw new Error(
+        "average() options.decimals and options.finalRoundSignificantDigits are mutually exclusive.",
+      );
+    }
+
+    const finalRoundMode = options?.finalRoundMode ?? "halfUp";
+
+    const roundHalfEven = (value: number): number => {
+      const absValue = Math.abs(value);
+      const lower = Math.floor(absValue);
+      const fraction = absValue - lower;
+      const epsilon = 1e-12;
+
+      let roundedInt: number;
+      if (fraction > 0.5 + epsilon) {
+        roundedInt = lower + 1;
+      } else if (fraction < 0.5 - epsilon) {
+        roundedInt = lower;
+      } else {
+        roundedInt = lower % 2 === 0 ? lower : lower + 1;
+      }
+
+      return Math.sign(value) * roundedInt;
+    };
+
+    const preRoundNumericValue = (value: number): number => {
+      if (preRoundDecimals !== undefined) {
+        const factor = 10 ** preRoundDecimals;
+        if (preRoundMode === "halfEven") {
+          return roundHalfEven(value * factor) / factor;
+        }
+        return Math.round(value * factor) / factor;
+      }
+
+      if (preRoundSignificantDigits !== undefined) {
+        if (preRoundMode === "halfEven") {
+          if (value === 0) return 0;
+
+          const exponent = Math.floor(Math.log10(Math.abs(value)));
+          const scale = 10 ** (preRoundSignificantDigits - 1 - exponent);
+          const scaled = value * scale;
+          const roundedScaled = roundHalfEven(scaled);
+          return roundedScaled / scale;
+        }
+        return Number(value.toPrecision(preRoundSignificantDigits));
+      }
+
+      return value;
+    };
+
     const results = this._executeFilter();
     if (results.length === 0) return 0 as any;
     const total = results.reduce((sum, item) => {
@@ -1219,14 +1455,14 @@ export class ArrayQuery<
         options?.coerceNumericStrings !== false;
 
       if (typeof value === "number" && Number.isFinite(value)) {
-        return sum + value;
+        return sum + preRoundNumericValue(value);
       }
 
       if (shouldCoerceNumericStrings && typeof value === "string") {
         const trimmed = value.trim();
         const parsed = Number(trimmed);
         if (trimmed !== "" && Number.isFinite(parsed)) {
-          return sum + parsed;
+          return sum + preRoundNumericValue(parsed);
         }
       }
 
@@ -1234,12 +1470,39 @@ export class ArrayQuery<
     }, 0);
 
     const average = total / results.length;
+
+    const roundToDecimals = (value: number, roundDecimals: number): number => {
+      const factor = 10 ** roundDecimals;
+      if (finalRoundMode === "halfEven") {
+        return roundHalfEven(value * factor) / factor;
+      }
+      return Math.round(value * factor) / factor;
+    };
+
+    const roundToSignificant = (
+      value: number,
+      significantDigits: number,
+    ): number => {
+      if (value === 0) return 0;
+      if (finalRoundMode === "halfEven") {
+        const exponent = Math.floor(Math.log10(Math.abs(value)));
+        const scale = 10 ** (significantDigits - 1 - exponent);
+        const scaled = value * scale;
+        const roundedScaled = roundHalfEven(scaled);
+        return roundedScaled / scale;
+      }
+      return Number(value.toPrecision(significantDigits));
+    };
+
+    if (finalRoundSignificantDigits !== undefined) {
+      return roundToSignificant(average, finalRoundSignificantDigits) as any;
+    }
+
     if (decimals === undefined) {
       return average as any;
     }
 
-    const factor = 10 ** decimals;
-    return (Math.round(average * factor) / factor) as any;
+    return roundToDecimals(average, decimals) as any;
   }
 
   /**
