@@ -29,6 +29,7 @@ function coerceNumericComparisonValue(
   path: string,
   options?: NumericComparisonOptions,
 ): number {
+  const coerceNumericStrings = options?.coerceNumericStrings !== false;
   const nullAsZero = options?.nullAsZero !== false;
 
   if (value === null || value === undefined) {
@@ -51,7 +52,7 @@ function coerceNumericComparisonValue(
     );
   }
 
-  if (typeof value === "string") {
+  if (coerceNumericStrings && typeof value === "string") {
     const trimmed = value.trim();
     if (trimmed === "") {
       throw new Error(
@@ -66,7 +67,7 @@ function coerceNumericComparisonValue(
   }
 
   throw new Error(
-    `Numeric comparison at path "${path}" requires a number or numeric string, received ${formatValue(value)}.`,
+    `Numeric comparison at path "${path}" requires a finite number${coerceNumericStrings ? " or numeric string" : ""}, received ${formatValue(value)}.`,
   );
 }
 
@@ -85,7 +86,11 @@ export function buildNumericComparisonClause(
   return {
     $where: function (this: any) {
       const rawValue = path === "" ? this : safeGetByPath(this, path);
-      const actual = coerceNumericComparisonValue(rawValue, path || "<self>", options);
+      const actual = coerceNumericComparisonValue(
+        rawValue,
+        path || "<self>",
+        options,
+      );
 
       switch (operator) {
         case "gt":

@@ -130,6 +130,32 @@ describe("ArrayQuery", () => {
       expect(result[0].id).toBe(3);
       expect(result[1].id).toBe(4);
     });
+
+    it("should allow disabling numeric string coercion for whereIn/whereNotIn", () => {
+      const data = {
+        items: [
+          { id: 1, price: "100" },
+          { id: 2, price: "50" },
+          { id: 3, price: 100 },
+          { id: 4, price: 50 },
+        ],
+      };
+
+      const inResult = query(data)
+        .array("items")
+        .whereIn("price", [100, 50], { coerceNumericStrings: false })
+        .all();
+
+      const notInResult = query(data)
+        .array("items")
+        .whereNotIn("price", [100, 50], { coerceNumericStrings: false })
+        .all();
+
+      expect(inResult).toHaveLength(2);
+      expect(inResult.map((x) => x.id)).toEqual([3, 4]);
+      expect(notInResult).toHaveLength(2);
+      expect(notInResult.map((x) => x.id)).toEqual([1, 2]);
+    });
   });
 
   describe(".whereMissing() and .whereExists()", () => {
@@ -585,6 +611,35 @@ describe("ArrayQuery", () => {
       expect(result).toBe(375);
     });
 
+    it("should coerce numeric-string values for sum", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "100" },
+          { id: 2, price: "50.5" },
+          { id: 3, price: 24.5 },
+          { id: 4, price: "not-a-number" },
+        ],
+      })
+        .array("items")
+        .sum("price");
+
+      expect(result).toBe(175);
+    });
+
+    it("should allow disabling numeric-string coercion for sum", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "100" },
+          { id: 2, price: "50" },
+          { id: 3, price: 25 },
+        ],
+      })
+        .array("items")
+        .sum("price", { coerceNumericStrings: false });
+
+      expect(result).toBe(25);
+    });
+
     it("should sum primitive numeric arrays when path is omitted", () => {
       const result = query([1, 2, 3, 4]).arrayRoot<number>().sum();
       expect(result).toBe(10);
@@ -602,6 +657,36 @@ describe("ArrayQuery", () => {
     it("should calculate average of numeric values", () => {
       const result = query(testData).array("items").average("price");
       expect(result).toBe(93.75);
+    });
+
+    it("should coerce numeric-string values for average", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "100" },
+          { id: 2, price: "50" },
+          { id: 3, price: 50 },
+          { id: 4, price: "not-a-number" },
+        ],
+      })
+        .array("items")
+        .average("price");
+
+      expect(result).toBe(50);
+    });
+
+    it("should allow disabling numeric-string coercion for average", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "100" },
+          { id: 2, price: "50" },
+          { id: 3, price: 50 },
+          { id: 4, price: 25 },
+        ],
+      })
+        .array("items")
+        .average("price", { coerceNumericStrings: false });
+
+      expect(result).toBe(18.75);
     });
 
     it("should average primitive numeric arrays when path is omitted", () => {
@@ -740,9 +825,23 @@ describe("ArrayQuery", () => {
       expect(result).toEqual([3, 2, 1.5]);
     });
 
+    it("should optionally coerce numeric strings for abs()", () => {
+      const data = {
+        items: [{ value: "-3" }, { value: "2.5" }, { value: -1.5 }],
+      };
+
+      const result = query(data)
+        .array("items")
+        .pluck("value")
+        .abs({ coerceNumericStrings: true })
+        .all();
+
+      expect(result).toEqual([3, 2.5, 1.5]);
+    });
+
     it("should throw when abs() receives non-number values", () => {
       const data = {
-        items: [{ value: -3 }, { value: "2" }],
+        items: [{ value: -3 }, { value: "not-a-number" }],
       };
 
       expect(() => {
@@ -759,6 +858,20 @@ describe("ArrayQuery", () => {
         .array("items")
         .pluck("value")
         .clamp(0, 100)
+        .all();
+
+      expect(result).toEqual([0, 40, 100]);
+    });
+
+    it("should optionally coerce numeric strings for clamp()", () => {
+      const data = {
+        items: [{ value: "-10" }, { value: "40" }, { value: 120 }],
+      };
+
+      const result = query(data)
+        .array("items")
+        .pluck("value")
+        .clamp(0, 100, { coerceNumericStrings: true })
         .all();
 
       expect(result).toEqual([0, 40, 100]);
@@ -784,6 +897,20 @@ describe("ArrayQuery", () => {
       expect(result).toEqual([12, 30, -5]);
     });
 
+    it("should optionally coerce numeric strings for scale()", () => {
+      const data = {
+        items: [{ value: "1.2" }, { value: "3" }, { value: -0.5 }],
+      };
+
+      const result = query(data)
+        .array("items")
+        .pluck("value")
+        .scale(10, { coerceNumericStrings: true })
+        .all();
+
+      expect(result).toEqual([12, 30, -5]);
+    });
+
     it("should offset values by delta", () => {
       const data = {
         items: [{ value: 300 }, { value: 310 }],
@@ -798,6 +925,22 @@ describe("ArrayQuery", () => {
       expect(result).toHaveLength(2);
       expect(result[0]).toBeCloseTo(26.85, 10);
       expect(result[1]).toBeCloseTo(36.85, 10);
+    });
+
+    it("should optionally coerce numeric strings for offset()", () => {
+      const data = {
+        items: [{ value: "300" }, { value: "310.5" }],
+      };
+
+      const result = query(data)
+        .array("items")
+        .pluck("value")
+        .offset(-273.15, { coerceNumericStrings: true })
+        .all();
+
+      expect(result).toHaveLength(2);
+      expect(result[0]).toBeCloseTo(26.85, 10);
+      expect(result[1]).toBeCloseTo(37.35, 10);
     });
 
     it("should round number values to significant digits", () => {
@@ -844,12 +987,54 @@ describe("ArrayQuery", () => {
 
     it("should throw when rounding non-number values", () => {
       const data = {
-        items: [{ value: 1.234 }, { value: "2.345" }],
+        items: [{ value: 1.234 }, { value: "oops" }],
       };
 
       expect(() => {
         query(data).array("items").pluck("value").round(2).all();
       }).toThrow("Use ofType('number') or number() first");
+    });
+
+    it("should allow disabling numeric-string coercion for scale()", () => {
+      const data = {
+        items: [{ value: "1.2" }, { value: 3 }],
+      };
+
+      expect(() => {
+        query(data)
+          .array("items")
+          .pluck("value")
+          .scale(10, { coerceNumericStrings: false })
+          .all();
+      }).toThrow("Use ofType('number') or number() first");
+    });
+
+    it("should optionally coerce numeric strings for round()", () => {
+      const data = {
+        items: [{ value: "1.234" }, { value: "2.345" }, { value: 3.333 }],
+      };
+
+      const result = query(data)
+        .array("items")
+        .pluck("value")
+        .round(2, { coerceNumericStrings: true })
+        .all();
+
+      expect(result).toEqual([1.23, 2.35, 3.33]);
+    });
+
+    it("should optionally coerce numeric strings for roundSignificant()", () => {
+      const data = {
+        items: [{ value: "1234.56" }, { value: "0.012345" }, { value: 999.5 }],
+      };
+
+      const result = query(data)
+        .array("items")
+        .pluck("value")
+        .roundSignificant(3, { coerceNumericStrings: true })
+        .all();
+
+      expect(result).toEqual([1230, 0.0123, 1000]);
     });
 
     it("should support first/last/nth/one/count terminals", () => {
@@ -2431,6 +2616,34 @@ describe("ArrayQuery", () => {
       });
     });
 
+    it("should coerce numeric-string values in aggregate sum/average by default", () => {
+      const stats = query({
+        items: [{ price: "100" }, { price: "50.5" }, { price: 24.5 }],
+      })
+        .array("items")
+        .aggregate()
+        .sum("price")
+        .average("price")
+        .all();
+
+      expect(stats.sum).toBe(175);
+      expect(stats.average).toBeCloseTo(58.333333333333336, 12);
+    });
+
+    it("should allow disabling numeric-string coercion in aggregate sum/average", () => {
+      const stats = query({
+        items: [{ price: "100" }, { price: "50" }, { price: 25 }],
+      })
+        .array("items")
+        .aggregate()
+        .sum("price", { coerceNumericStrings: false })
+        .average("price", { coerceNumericStrings: false })
+        .all();
+
+      expect(stats.sum).toBe(25);
+      expect(stats.average).toBeCloseTo(8.333333333333334, 12);
+    });
+
     it("should validate decimals options in aggregate() helper", () => {
       expect(() =>
         query(testData)
@@ -3115,7 +3328,7 @@ describe("ArrayQuery", () => {
           .where("price")
           .greaterThan(100, { nullAsZero: false })
           .entries(),
-      ).toThrow('Pass { nullAsZero: true }');
+      ).toThrow("Pass { nullAsZero: true }");
     });
 
     it("should support objectGroups().whereIn(), whereNotIn(), whereAll(), whereAny(), whereNone()", () => {

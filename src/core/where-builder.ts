@@ -143,7 +143,11 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   equals(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     if (options) {
       if (options.ignoreCase !== undefined) {
@@ -159,6 +163,8 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
       const searchValue = value;
       const path = this.path;
       const negate = this.negate;
+      const shouldCoerceNumericStrings =
+        options?.coerceNumericStrings !== false;
 
       const numericClause = {
         $where: function (this: any) {
@@ -184,7 +190,10 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
             matches = fieldValue === searchValue;
           }
           // Numeric string match
-          else if (typeof fieldValue === "string") {
+          else if (
+            shouldCoerceNumericStrings &&
+            typeof fieldValue === "string"
+          ) {
             const trimmed = fieldValue.trim();
             const parsed = Number(trimmed);
             if (Number.isFinite(parsed)) {
@@ -216,7 +225,11 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   eq(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     return this.equals(value, options);
   }
@@ -226,7 +239,11 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   notEquals(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     return this.not().equals(value, options);
   }
@@ -236,7 +253,11 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   ne(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     return this.notEquals(value, options);
   }
@@ -255,7 +276,10 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  in(values: Primitive[]): ArrayQuery<TItem, TMode> {
+  in(
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ArrayQuery<TItem, TMode> {
     if (!Array.isArray(values) || values.length === 0) {
       throw new Error(
         `whereIn("${this.path}") requires a non-empty array of values.`,
@@ -263,14 +287,10 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
     }
 
     if (this.negate) {
-      return this.parent._pushClause(this._buildClause({ $nin: values }));
+      return this.parent.whereNotIn(this.path, values, options);
     }
 
-    if (this.path === "") {
-      return this.parent._pushClause(this._buildClause({ $in: values }));
-    }
-
-    return this.parent.whereIn(this.path, values);
+    return this.parent.whereIn(this.path, values, options);
   }
 
   /**

@@ -344,7 +344,12 @@ export class ArrayQuery<
    */
   filter(
     expression: string,
-    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     const clause = parseCompositeFilterExpression(expression, options);
     return this._pushClause(clause);
@@ -359,7 +364,12 @@ export class ArrayQuery<
   filterIfDefined(
     expression: string,
     param: any,
-    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     if (param === null || param === undefined) {
       return this;
@@ -399,7 +409,12 @@ export class ArrayQuery<
   filterIfAllDefined(
     expression: string,
     params: Record<string, any>,
-    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     if (Array.isArray(params)) {
       throw new Error(
@@ -500,7 +515,11 @@ export class ArrayQuery<
   whereIfDefined(
     path: string,
     value: any,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.where(path);
@@ -514,7 +533,7 @@ export class ArrayQuery<
           builder.noTrim();
         }
       }
-      return builder.equals(value);
+      return builder.equals(value, options);
     }
     return this;
   }
@@ -525,7 +544,11 @@ export class ArrayQuery<
   whereNotIfDefined(
     path: string,
     value: any,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     if (value !== null && value !== undefined) {
       const builder = this.whereNot(path);
@@ -539,7 +562,7 @@ export class ArrayQuery<
           builder.noTrim();
         }
       }
-      return builder.equals(value);
+      return builder.equals(value, options);
     }
     return this;
   }
@@ -750,19 +773,25 @@ export class ArrayQuery<
    * Filters items where value at path is in the provided list.
    * Supports numeric string coercion: in([100]) matches both 100 and "100"
    */
-  whereIn(path: string, values: Primitive[]): ArrayQuery<TItem, TMode> {
+  whereIn(
+    path: string,
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ArrayQuery<TItem, TMode> {
     if (!Array.isArray(values) || values.length === 0) {
       throw new Error(
         `whereIn("${path}") requires a non-empty array of values.`,
       );
     }
 
+    const shouldCoerceNumericStrings = options?.coerceNumericStrings !== false;
+
     // Check if any value is a finite number - if so, support numeric string coercion
     const hasNumericValues = values.some(
       (v) => typeof v === "number" && Number.isFinite(v),
     );
 
-    if (hasNumericValues) {
+    if (shouldCoerceNumericStrings && hasNumericValues) {
       return this._pushClause({
         $where: function (this: any) {
           let fieldValue: any;
@@ -803,19 +832,25 @@ export class ArrayQuery<
    * Filters items where value at path is NOT in the provided list.
    * Supports numeric string coercion: notIn([100]) excludes both 100 and "100"
    */
-  whereNotIn(path: string, values: Primitive[]): ArrayQuery<TItem, TMode> {
+  whereNotIn(
+    path: string,
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ArrayQuery<TItem, TMode> {
     if (!Array.isArray(values) || values.length === 0) {
       throw new Error(
         `whereNotIn("${path}") requires a non-empty array of values.`,
       );
     }
 
+    const shouldCoerceNumericStrings = options?.coerceNumericStrings !== false;
+
     // Check if any value is a finite number - if so, support numeric string coercion
     const hasNumericValues = values.some(
       (v) => typeof v === "number" && Number.isFinite(v),
     );
 
-    if (hasNumericValues) {
+    if (shouldCoerceNumericStrings && hasNumericValues) {
       return this._pushClause({
         $where: function (this: any) {
           let fieldValue: any;
@@ -1075,7 +1110,7 @@ export class ArrayQuery<
    */
   sum(
     path: string = "",
-    options?: { decimals?: number },
+    options?: { decimals?: number; coerceNumericStrings?: boolean },
   ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("sum", path, options) as any;
@@ -1095,7 +1130,22 @@ export class ArrayQuery<
     const total = results.reduce((sum, item) => {
       const value =
         path === "" ? (item as any) : getByPath(item as any, path, true);
-      return sum + (typeof value === "number" ? value : 0);
+      const shouldCoerceNumericStrings =
+        options?.coerceNumericStrings !== false;
+
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return sum + value;
+      }
+
+      if (shouldCoerceNumericStrings && typeof value === "string") {
+        const trimmed = value.trim();
+        const parsed = Number(trimmed);
+        if (trimmed !== "" && Number.isFinite(parsed)) {
+          return sum + parsed;
+        }
+      }
+
+      return sum;
     }, 0);
 
     if (decimals === undefined) {
@@ -1111,7 +1161,7 @@ export class ArrayQuery<
    */
   average(
     path: string = "",
-    options?: { decimals?: number },
+    options?: { decimals?: number; coerceNumericStrings?: boolean },
   ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
     if (this.items === undefined) {
       return this._appendStep("average", path, options) as any;
@@ -1132,7 +1182,22 @@ export class ArrayQuery<
     const total = results.reduce((sum, item) => {
       const value =
         path === "" ? (item as any) : getByPath(item as any, path, true);
-      return sum + (typeof value === "number" ? value : 0);
+      const shouldCoerceNumericStrings =
+        options?.coerceNumericStrings !== false;
+
+      if (typeof value === "number" && Number.isFinite(value)) {
+        return sum + value;
+      }
+
+      if (shouldCoerceNumericStrings && typeof value === "string") {
+        const trimmed = value.trim();
+        const parsed = Number(trimmed);
+        if (trimmed !== "" && Number.isFinite(parsed)) {
+          return sum + parsed;
+        }
+      }
+
+      return sum;
     }, 0);
 
     const average = total / results.length;

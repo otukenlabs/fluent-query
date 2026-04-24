@@ -42,6 +42,13 @@ export type WhereOptions = {
  */
 export type NumericComparisonOptions = {
   /**
+   * When true, numeric strings are parsed as numbers during comparisons.
+   *
+   * @defaultValue `true`
+   */
+  coerceNumericStrings?: boolean;
+
+  /**
    * When true, `null` and `undefined` values are treated as `0`.
    *
    * @defaultValue `true`

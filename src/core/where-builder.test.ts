@@ -126,6 +126,22 @@ describe("WhereBuilder", () => {
       expect(result.map((i) => i.id)).toEqual([2, 3]);
     });
 
+    it("should allow disabling numeric-string coercion for equals", () => {
+      const result = query({
+        items: [
+          { id: 1, price: "100" },
+          { id: 2, price: 100 },
+        ],
+      })
+        .array("items")
+        .where("price")
+        .equals(100, { coerceNumericStrings: false })
+        .all();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(2);
+    });
+
     it("should handle floating point number comparisons", () => {
       const result = query({
         items: [
@@ -413,7 +429,7 @@ describe("WhereBuilder", () => {
           .where("price")
           .greaterThan(100)
           .all(),
-      ).toThrow('requires a number or numeric string');
+      ).toThrow("requires a finite number or numeric string");
     });
 
     it("should allow nullish handling to be switched to throwing", () => {
@@ -425,7 +441,7 @@ describe("WhereBuilder", () => {
           .where("price")
           .greaterThan(100, { nullAsZero: false })
           .all(),
-      ).toThrow('Pass { nullAsZero: true }');
+      ).toThrow("Pass { nullAsZero: true }");
     });
 
     it("should support in() as whereIn() terminal alias", () => {
@@ -437,6 +453,22 @@ describe("WhereBuilder", () => {
 
       expect(result).toHaveLength(2);
       expect(result.map((u) => u.name)).toEqual(["Alice", "Charlie"]);
+    });
+
+    it("should allow disabling numeric-string coercion for in()", () => {
+      const result = query({
+        users: [
+          { id: 1, score: "100" },
+          { id: 2, score: 100 },
+        ],
+      })
+        .array("users")
+        .where("score")
+        .in([100], { coerceNumericStrings: false })
+        .all();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].id).toBe(2);
     });
 
     it("should support not().in() as negated membership", () => {

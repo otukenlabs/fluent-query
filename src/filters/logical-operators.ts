@@ -157,6 +157,7 @@ class LogicalExpressionParser {
       ignoreCase?: boolean;
       trim?: boolean;
       decimals?: number;
+      coerceNumericStrings?: boolean;
     },
   ) {}
 
@@ -309,7 +310,12 @@ export function splitLogicalOperators(expression: string): {
  */
 export function parseCompositeFilterExpression(
   expression: string,
-  options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+  options?: {
+    ignoreCase?: boolean;
+    trim?: boolean;
+    decimals?: number;
+    coerceNumericStrings?: boolean;
+  },
 ): any {
   const tokens = tokenizeLogicalExpression(expression);
 

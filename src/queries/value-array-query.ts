@@ -107,6 +107,28 @@ export class ValueArrayQuery<TValue = any> {
     return this.values.length;
   }
 
+  private _toFiniteNumberOrThrow(
+    value: unknown,
+    methodName: string,
+    options?: { coerceNumericStrings?: boolean },
+  ): number {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (options?.coerceNumericStrings !== false && typeof value === "string") {
+      const trimmed = value.trim();
+      const parsed = Number(trimmed);
+      if (trimmed !== "" && Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    throw new Error(
+      `Cannot apply ${methodName}() to non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
+    );
+  }
+
   /**
    * Keeps only values matching the provided runtime type.
    * No coercion is performed.
@@ -160,14 +182,10 @@ export class ValueArrayQuery<TValue = any> {
    * // [-3, 2, -1.5] → [3, 2, 1.5]
    * ```
    */
-  abs(): ValueArrayQuery<number> {
+  abs(options?: { coerceNumericStrings?: boolean }): ValueArrayQuery<number> {
     const absolute = this.values.map((value) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(
-          `Cannot apply abs() to non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
-        );
-      }
-      return Math.abs(value);
+      const numericValue = this._toFiniteNumberOrThrow(value, "abs", options);
+      return Math.abs(numericValue);
     });
 
     return new ValueArrayQuery(absolute);
@@ -186,7 +204,11 @@ export class ValueArrayQuery<TValue = any> {
    * // [-10, 40, 120] → [0, 40, 100]
    * ```
    */
-  clamp(min: number, max: number): ValueArrayQuery<number> {
+  clamp(
+    min: number,
+    max: number,
+    options?: { coerceNumericStrings?: boolean },
+  ): ValueArrayQuery<number> {
     if (!Number.isFinite(min) || !Number.isFinite(max)) {
       throw new Error("clamp(min, max) expects finite number bounds.");
     }
@@ -195,12 +217,8 @@ export class ValueArrayQuery<TValue = any> {
     }
 
     const clamped = this.values.map((value) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(
-          `Cannot apply clamp() to non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
-        );
-      }
-      return Math.min(max, Math.max(min, value));
+      const numericValue = this._toFiniteNumberOrThrow(value, "clamp", options);
+      return Math.min(max, Math.max(min, numericValue));
     });
 
     return new ValueArrayQuery(clamped);
@@ -218,18 +236,17 @@ export class ValueArrayQuery<TValue = any> {
    * // [1.2, 3, -0.5] → [12, 30, -5]
    * ```
    */
-  scale(factor: number): ValueArrayQuery<number> {
+  scale(
+    factor: number,
+    options?: { coerceNumericStrings?: boolean },
+  ): ValueArrayQuery<number> {
     if (!Number.isFinite(factor)) {
       throw new Error("scale(factor) expects a finite number factor.");
     }
 
     const scaled = this.values.map((value) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(
-          `Cannot apply scale() to non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
-        );
-      }
-      return value * factor;
+      const numericValue = this._toFiniteNumberOrThrow(value, "scale", options);
+      return numericValue * factor;
     });
 
     return new ValueArrayQuery(scaled);
@@ -247,18 +264,21 @@ export class ValueArrayQuery<TValue = any> {
    * // [300, 310] → [26.85, 36.85]
    * ```
    */
-  offset(delta: number): ValueArrayQuery<number> {
+  offset(
+    delta: number,
+    options?: { coerceNumericStrings?: boolean },
+  ): ValueArrayQuery<number> {
     if (!Number.isFinite(delta)) {
       throw new Error("offset(delta) expects a finite number delta.");
     }
 
     const offsetValues = this.values.map((value) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(
-          `Cannot apply offset() to non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
-        );
-      }
-      return value + delta;
+      const numericValue = this._toFiniteNumberOrThrow(
+        value,
+        "offset",
+        options,
+      );
+      return numericValue + delta;
     });
 
     return new ValueArrayQuery(offsetValues);
@@ -279,7 +299,10 @@ export class ValueArrayQuery<TValue = any> {
    */
   round(
     decimals: number,
-    options?: { mode?: "halfUp" | "halfEven" },
+    options?: {
+      mode?: "halfUp" | "halfEven";
+      coerceNumericStrings?: boolean;
+    },
   ): ValueArrayQuery<number> {
     if (!Number.isInteger(decimals) || decimals < 0 || decimals > 100) {
       throw new Error("round(decimals) expects an integer between 0 and 100.");
@@ -307,15 +330,11 @@ export class ValueArrayQuery<TValue = any> {
 
     const factor = 10 ** decimals;
     const rounded = this.values.map((value) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(
-          `Cannot round non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
-        );
-      }
+      const numericValue = this._toFiniteNumberOrThrow(value, "round", options);
       if (mode === "halfEven") {
-        return roundHalfEven(value * factor) / factor;
+        return roundHalfEven(numericValue * factor) / factor;
       }
-      return Math.round(value * factor) / factor;
+      return Math.round(numericValue * factor) / factor;
     });
 
     return new ValueArrayQuery(rounded);
@@ -336,7 +355,10 @@ export class ValueArrayQuery<TValue = any> {
    */
   roundSignificant(
     digits: number,
-    options?: { mode?: "halfUp" | "halfEven" },
+    options?: {
+      mode?: "halfUp" | "halfEven";
+      coerceNumericStrings?: boolean;
+    },
   ): ValueArrayQuery<number> {
     if (!Number.isInteger(digits) || digits < 1 || digits > 100) {
       throw new Error(
@@ -378,15 +400,15 @@ export class ValueArrayQuery<TValue = any> {
     };
 
     const rounded = this.values.map((value) => {
-      if (typeof value !== "number" || !Number.isFinite(value)) {
-        throw new Error(
-          `Cannot round non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
-        );
-      }
+      const numericValue = this._toFiniteNumberOrThrow(
+        value,
+        "roundSignificant",
+        options,
+      );
       if (mode === "halfEven") {
-        return roundToSignificantHalfEven(value, digits);
+        return roundToSignificantHalfEven(numericValue, digits);
       }
-      return Number(value.toPrecision(digits));
+      return Number(numericValue.toPrecision(digits));
     });
 
     return new ValueArrayQuery(rounded);

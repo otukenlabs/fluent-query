@@ -126,7 +126,12 @@ export class ObjectGroupQuery {
   /** Filters selected group values using a DSL expression. */
   filter(
     expression: string,
-    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+    },
   ): ObjectGroupQuery {
     const clause = parseCompositeFilterExpression(expression, options);
     return this._applyWhereClause(clause);
@@ -136,7 +141,12 @@ export class ObjectGroupQuery {
   filterIfDefined(
     expression: string,
     param: any,
-    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+    },
   ): ObjectGroupQuery {
     if (param === null || param === undefined) {
       return this;
@@ -191,22 +201,104 @@ export class ObjectGroupQuery {
   }
 
   /** Filters selected group values where value at path is in the provided list. */
-  whereIn(path: string, values: Primitive[]): ObjectGroupQuery {
+  whereIn(
+    path: string,
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ObjectGroupQuery {
     if (!Array.isArray(values) || values.length === 0) {
       throw new Error(
         `whereIn("${path}") requires a non-empty array of values.`,
       );
     }
+    const shouldCoerceNumericStrings = options?.coerceNumericStrings !== false;
+    const hasNumericValues = values.some(
+      (v) => typeof v === "number" && Number.isFinite(v),
+    );
+
+    if (shouldCoerceNumericStrings && hasNumericValues) {
+      return this._applyWhereClause({
+        $where: function (this: any) {
+          let fieldValue: any;
+          try {
+            fieldValue = path === "" ? this : this[path];
+          } catch {
+            return false;
+          }
+
+          for (const val of values) {
+            if (fieldValue === val) return true;
+
+            if (typeof val === "number" && Number.isFinite(val)) {
+              if (
+                typeof fieldValue === "number" &&
+                Number.isFinite(fieldValue)
+              ) {
+                if (fieldValue === val) return true;
+              } else if (typeof fieldValue === "string") {
+                const trimmed = fieldValue.trim();
+                const parsed = Number(trimmed);
+                if (Number.isFinite(parsed) && parsed === val) return true;
+              }
+            }
+          }
+
+          return false;
+        },
+      });
+    }
+
     return this._applyWhereClause({ [path]: { $in: values } });
   }
 
   /** Filters selected group values where value at path is NOT in the provided list. */
-  whereNotIn(path: string, values: Primitive[]): ObjectGroupQuery {
+  whereNotIn(
+    path: string,
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ObjectGroupQuery {
     if (!Array.isArray(values) || values.length === 0) {
       throw new Error(
         `whereNotIn("${path}") requires a non-empty array of values.`,
       );
     }
+    const shouldCoerceNumericStrings = options?.coerceNumericStrings !== false;
+    const hasNumericValues = values.some(
+      (v) => typeof v === "number" && Number.isFinite(v),
+    );
+
+    if (shouldCoerceNumericStrings && hasNumericValues) {
+      return this._applyWhereClause({
+        $where: function (this: any) {
+          let fieldValue: any;
+          try {
+            fieldValue = path === "" ? this : this[path];
+          } catch {
+            return true;
+          }
+
+          for (const val of values) {
+            if (fieldValue === val) return false;
+
+            if (typeof val === "number" && Number.isFinite(val)) {
+              if (
+                typeof fieldValue === "number" &&
+                Number.isFinite(fieldValue)
+              ) {
+                if (fieldValue === val) return false;
+              } else if (typeof fieldValue === "string") {
+                const trimmed = fieldValue.trim();
+                const parsed = Number(trimmed);
+                if (Number.isFinite(parsed) && parsed === val) return false;
+              }
+            }
+          }
+
+          return true;
+        },
+      });
+    }
+
     return this._applyWhereClause({ [path]: { $nin: values } });
   }
 
@@ -703,7 +795,11 @@ export class ObjectGroupWhereBuilder {
 
   equals(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ObjectGroupQuery {
     if (options) {
       if (options.ignoreCase !== undefined) {
@@ -719,6 +815,8 @@ export class ObjectGroupWhereBuilder {
       const searchValue = value;
       const path = this.path;
       const negate = this.negate;
+      const shouldCoerceNumericStrings =
+        options?.coerceNumericStrings !== false;
 
       const numericClause = {
         $where: function (this: any) {
@@ -744,7 +842,10 @@ export class ObjectGroupWhereBuilder {
             matches = fieldValue === searchValue;
           }
           // Numeric string match
-          else if (typeof fieldValue === "string") {
+          else if (
+            shouldCoerceNumericStrings &&
+            typeof fieldValue === "string"
+          ) {
             const trimmed = fieldValue.trim();
             const parsed = Number(trimmed);
             if (Number.isFinite(parsed)) {
@@ -775,26 +876,41 @@ export class ObjectGroupWhereBuilder {
 
   eq(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ObjectGroupQuery {
     return this.equals(value, options);
   }
 
   notEquals(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ObjectGroupQuery {
     return this.not().equals(value, options);
   }
 
   ne(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ObjectGroupQuery {
     return this.notEquals(value, options);
   }
 
-  in(values: Primitive[]): ObjectGroupQuery {
+  in(
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ObjectGroupQuery {
     if (!Array.isArray(values) || values.length === 0) {
       throw new Error(
         `whereIn("${this.path}") requires a non-empty array of values.`,
@@ -802,10 +918,10 @@ export class ObjectGroupWhereBuilder {
     }
 
     if (this.negate) {
-      return this.parent._applyWhereClause({ [this.path]: { $nin: values } });
+      return this.parent.whereNotIn(this.path, values, options);
     }
 
-    return this.parent.whereIn(this.path, values);
+    return this.parent.whereIn(this.path, values, options);
   }
 
   contains(

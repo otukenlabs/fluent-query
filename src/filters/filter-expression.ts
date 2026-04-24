@@ -84,10 +84,16 @@ export function expressionToSiftClause(
   field: string,
   operator: string,
   value: any,
-  options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+  options?: {
+    ignoreCase?: boolean;
+    trim?: boolean;
+    decimals?: number;
+    coerceNumericStrings?: boolean;
+  },
 ): any {
   const flags = options?.ignoreCase === false ? "" : "i";
   const shouldTrim = options?.trim !== false; // default true
+  const shouldCoerceNumericStrings = options?.coerceNumericStrings !== false;
 
   switch (operator) {
     case "==":
@@ -111,7 +117,11 @@ export function expressionToSiftClause(
       }
 
       // For numeric values WITHOUT decimals, support numeric-string coercion
-      if (typeof value === "number" && Number.isFinite(value)) {
+      if (
+        shouldCoerceNumericStrings &&
+        typeof value === "number" &&
+        Number.isFinite(value)
+      ) {
         return {
           [field]: {
             $where: function (this: any) {
@@ -123,7 +133,10 @@ export function expressionToSiftClause(
               }
 
               // Direct number match
-              if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+              if (
+                typeof fieldValue === "number" &&
+                Number.isFinite(fieldValue)
+              ) {
                 return fieldValue === value;
               }
 
@@ -164,7 +177,11 @@ export function expressionToSiftClause(
       }
 
       // For numeric values WITHOUT decimals, support numeric-string coercion
-      if (typeof value === "number" && Number.isFinite(value)) {
+      if (
+        shouldCoerceNumericStrings &&
+        typeof value === "number" &&
+        Number.isFinite(value)
+      ) {
         return {
           [field]: {
             $where: function (this: any) {
@@ -176,7 +193,10 @@ export function expressionToSiftClause(
               }
 
               // Direct number match
-              if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+              if (
+                typeof fieldValue === "number" &&
+                Number.isFinite(fieldValue)
+              ) {
                 return fieldValue !== value;
               }
 
@@ -198,7 +218,11 @@ export function expressionToSiftClause(
 
       return { [field]: { $ne: value } };
     case ">":
-      if (typeof value === "number" && Number.isFinite(value)) {
+      if (
+        shouldCoerceNumericStrings &&
+        typeof value === "number" &&
+        Number.isFinite(value)
+      ) {
         return {
           $where: function (this: any) {
             let fieldValue: any;
@@ -230,7 +254,11 @@ export function expressionToSiftClause(
       }
       return { [field]: { $gt: value } };
     case ">=":
-      if (typeof value === "number" && Number.isFinite(value)) {
+      if (
+        shouldCoerceNumericStrings &&
+        typeof value === "number" &&
+        Number.isFinite(value)
+      ) {
         return {
           $where: function (this: any) {
             let fieldValue: any;
@@ -262,7 +290,11 @@ export function expressionToSiftClause(
       }
       return { [field]: { $gte: value } };
     case "<":
-      if (typeof value === "number" && Number.isFinite(value)) {
+      if (
+        shouldCoerceNumericStrings &&
+        typeof value === "number" &&
+        Number.isFinite(value)
+      ) {
         return {
           $where: function (this: any) {
             let fieldValue: any;
@@ -294,7 +326,11 @@ export function expressionToSiftClause(
       }
       return { [field]: { $lt: value } };
     case "<=":
-      if (typeof value === "number" && Number.isFinite(value)) {
+      if (
+        shouldCoerceNumericStrings &&
+        typeof value === "number" &&
+        Number.isFinite(value)
+      ) {
         return {
           $where: function (this: any) {
             let fieldValue: any;

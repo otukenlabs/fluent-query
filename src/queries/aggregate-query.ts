@@ -24,7 +24,10 @@ export class AggregateQuery {
    * @param options Optional rounding options
    * @returns this for chaining
    */
-  sum(path: string = "", options?: { decimals?: number }): this {
+  sum(
+    path: string = "",
+    options?: { decimals?: number; coerceNumericStrings?: boolean },
+  ): this {
     const decimals = options?.decimals;
     if (
       decimals !== undefined &&
@@ -37,7 +40,19 @@ export class AggregateQuery {
 
     const total = this.items.reduce((sum, item) => {
       const value = path === "" ? item : getByPath(item, path, true);
-      const num = typeof value === "number" ? value : 0;
+      let num = 0;
+      if (typeof value === "number" && Number.isFinite(value)) {
+        num = value;
+      } else if (
+        options?.coerceNumericStrings !== false &&
+        typeof value === "string"
+      ) {
+        const trimmed = value.trim();
+        const parsed = Number(trimmed);
+        if (trimmed !== "" && Number.isFinite(parsed)) {
+          num = parsed;
+        }
+      }
       return sum + num;
     }, 0);
 
@@ -58,7 +73,10 @@ export class AggregateQuery {
    * @param options Optional rounding options
    * @returns this for chaining
    */
-  average(path: string = "", options?: { decimals?: number }): this {
+  average(
+    path: string = "",
+    options?: { decimals?: number; coerceNumericStrings?: boolean },
+  ): this {
     const decimals = options?.decimals;
     if (
       decimals !== undefined &&
@@ -74,7 +92,19 @@ export class AggregateQuery {
     } else {
       const sum = this.items.reduce((total, item) => {
         const value = path === "" ? item : getByPath(item, path, true);
-        const num = typeof value === "number" ? value : 0;
+        let num = 0;
+        if (typeof value === "number" && Number.isFinite(value)) {
+          num = value;
+        } else if (
+          options?.coerceNumericStrings !== false &&
+          typeof value === "string"
+        ) {
+          const trimmed = value.trim();
+          const parsed = Number(trimmed);
+          if (trimmed !== "" && Number.isFinite(parsed)) {
+            num = parsed;
+          }
+        }
         return total + num;
       }, 0);
 

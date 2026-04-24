@@ -172,6 +172,18 @@ describe("filter-expression utilities", () => {
       expect(lteClause.$where.call({ x: 10 })).toBe(false);
     });
 
+    it("allows disabling numeric-string coercion", () => {
+      const eqClause = expressionToSiftClause("x", "==", 100, {
+        coerceNumericStrings: false,
+      });
+      expect(eqClause).toEqual({ x: 100 });
+
+      const gtClause = expressionToSiftClause("x", ">", 100, {
+        coerceNumericStrings: false,
+      });
+      expect(gtClause).toEqual({ x: { $gt: 100 } });
+    });
+
     it("builds regex clauses with trim/ignoreCase options", () => {
       const containsDefault = expressionToSiftClause(
         "name",
