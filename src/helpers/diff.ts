@@ -174,7 +174,7 @@ function compareUnorderedArrays(
   actual: unknown[],
   path: string,
   mismatches: Mismatch[],
-  options: DiffInternalOptions,
+  _options: DiffInternalOptions,
 ): void {
   const expectedCounts = new Map<string, number>();
   const actualCounts = new Map<string, number>();

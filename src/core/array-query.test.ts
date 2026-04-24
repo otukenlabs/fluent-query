@@ -372,6 +372,32 @@ describe("ArrayQuery", () => {
         .all();
       expect(last).toEqual([2, 1, undefined, null]);
     });
+
+    it("should coerce numeric-string values by default when sorting", () => {
+      const result = query([
+        { id: "a", price: "10" },
+        { id: "b", price: "2" },
+        { id: "c", price: "1" },
+      ])
+        .arrayRoot<{ id: string; price: string }>()
+        .sort("price", { direction: "asc" })
+        .all();
+
+      expect(result.map((item) => item.id)).toEqual(["c", "b", "a"]);
+    });
+
+    it("should allow disabling numeric-string coercion when sorting", () => {
+      const result = query([
+        { id: "a", price: "10" },
+        { id: "b", price: "2" },
+        { id: "c", price: "1" },
+      ])
+        .arrayRoot<{ id: string; price: string }>()
+        .sort("price", { direction: "asc", coerceNumericStrings: false })
+        .all();
+
+      expect(result.map((item) => item.id)).toEqual(["c", "a", "b"]);
+    });
   });
 
   describe(".filterIfDefined() and .filterIfAllDefined()", () => {
@@ -3391,7 +3417,7 @@ describe("ArrayQuery", () => {
       );
     });
 
-    it("should support objectGroups().filter() and filterIfDefined()", () => {
+    it("should support objectGroups().filter(), filterIfDefined(), and filterIfAllDefined()", () => {
       const root = {
         sections: {
           a: { type: "Premium", priority: 3 },
@@ -3419,6 +3445,273 @@ describe("ArrayQuery", () => {
       expect(groups.filterIfDefined("priority >= $min", undefined)).toBe(
         groups,
       );
+
+      expect(
+        groups
+          .filterIfAllDefined("priority >= $min and type == $type", {
+            min: 2,
+            type: "Premium",
+          })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "c"]);
+
+      expect(
+        groups.filterIfAllDefined("priority >= $min", { min: undefined }),
+      ).toBe(groups);
+
+      expect(() =>
+        groups.filterIfAllDefined("priority >= $min", [2] as any),
+      ).toThrow("filterIfAllDefined() expects an object map of params");
+    });
+
+    it("should support objectGroups().whereSelf(), whereMissing(), and whereExists()", () => {
+      const primitiveRoot = {
+        sections: {
+          a: 3,
+          b: 1,
+          c: 2,
+        },
+      };
+
+      expect(
+        query(primitiveRoot)
+          .objectGroups("sections")
+          .whereSelf()
+          .greaterThan(1)
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "c"]);
+
+      const objectRoot = {
+        sections: {
+          a: { meta: { tag: "x" }, kind: "alpha" },
+          b: { meta: {}, kind: "beta" },
+          c: { kind: "gamma" },
+        },
+      };
+
+      expect(
+        query(objectRoot)
+          .objectGroups("sections")
+          .whereExists("meta.tag")
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a"]);
+
+      expect(
+        query(objectRoot)
+          .objectGroups("sections")
+          .whereMissing("meta.tag")
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["b", "c"]);
+    });
+
+    it("should support objectGroups().whereSelf() membership and string operators", () => {
+      const numericRoot = {
+        sections: {
+          a: "10",
+          b: 2,
+          c: "3",
+        },
+      };
+
+      expect(
+        query(numericRoot)
+          .objectGroups("sections")
+          .whereSelf()
+          .in([2, 3])
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["b", "c"]);
+
+      expect(
+        query(numericRoot)
+          .objectGroups("sections")
+          .whereSelf()
+          .not()
+          .in([2, 3])
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a"]);
+
+      const root = {
+        sections: {
+          a: " Alpha ",
+          b: "Beta",
+          c: "Gamma",
+        },
+      };
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .in(["Beta", "Gamma"])
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["b", "c"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .not()
+          .in(["Beta", "Gamma"])
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .contains("alp", { ignoreCase: true, trim: true })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .startsWith("g", { ignoreCase: true })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["c"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .matches(/ta$/i)
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["b"]);
+    });
+
+    it("should support objectGroups().whereSelf() numeric aliases", () => {
+      const root = {
+        sections: {
+          a: "150",
+          b: "100",
+          c: 75,
+        },
+      };
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .gte(100)
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "b"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .lt(100)
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["c"]);
+    });
+
+    it("should support objectGroups().whereSelf() alias and modifier branches", () => {
+      const root = {
+        sections: {
+          a: " Alpha ",
+          b: "beta",
+          c: "Gamma",
+        },
+      };
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .ignoreCase()
+          .trim()
+          .eq("alpha")
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .ignoreCase(true)
+          .noTrim()
+          .eq("alpha")
+          .entries()
+          .map(([key]) => key),
+      ).toEqual([]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .notEquals("beta", { ignoreCase: true })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "c"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .ne("gamma", { ignoreCase: true })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "b"]);
+
+      expect(
+        query(root)
+          .objectGroups("sections")
+          .whereSelf()
+          .not()
+          .endsWith("ma", { ignoreCase: true, trim: true })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "b"]);
+
+      const numericRoot = {
+        sections: {
+          a: "150",
+          b: "100",
+          c: 75,
+        },
+      };
+
+      expect(
+        query(numericRoot)
+          .objectGroups("sections")
+          .whereSelf()
+          .gt(100)
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a"]);
+
+      expect(
+        query(numericRoot)
+          .objectGroups("sections")
+          .whereSelf()
+          .lessThanOrEqual(100)
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["b", "c"]);
+
+      expect(
+        query(numericRoot)
+          .objectGroups("sections")
+          .whereSelf()
+          .lte(75)
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["c"]);
     });
 
     it("should support objectGroups().sort() for ordered entries and values", () => {

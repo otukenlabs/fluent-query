@@ -75,6 +75,56 @@ export class ObjectGroupQuery {
     return this.withSelectedKeys(matchedKeys);
   }
 
+  private _bindExpressionParams(
+    expression: string,
+    params: Record<string, any>,
+  ): string {
+    const hasPlaceholder = /\$[a-zA-Z_][a-zA-Z0-9_]*/.test(expression);
+
+    if (!hasPlaceholder) {
+      return expression;
+    }
+
+    return expression.replace(
+      /\$([a-zA-Z_][a-zA-Z0-9_]*)/g,
+      (_match, name: string) => {
+        if (!(name in params)) {
+          throw new Error(
+            `Missing placeholder value for $${name} in filter expression.`,
+          );
+        }
+        const value = params[name];
+        if (value === null || value === undefined) {
+          throw new Error(
+            `Placeholder value for $${name} must be defined in filter expression.`,
+          );
+        }
+        return this._toExpressionLiteral(value);
+      },
+    );
+  }
+
+  private _toExpressionLiteral(value: any): string {
+    if (typeof value === "string") {
+      return `'${value.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
+    }
+    if (typeof value === "number" || typeof value === "bigint") {
+      return String(value);
+    }
+    if (typeof value === "boolean") {
+      return value ? "true" : "false";
+    }
+    if (value === null) {
+      return "null";
+    }
+    if (value === undefined) {
+      return "undefined";
+    }
+    throw new Error(
+      `Unsupported placeholder value type: ${typeof value}. Use string, number, bigint, boolean, null, or undefined.`,
+    );
+  }
+
   private isKeySelected(key: string): boolean {
     if (this.includeKeys && !this.includeKeys.has(key)) return false;
     if (this.excludeKeys?.has(key)) return false;
@@ -121,6 +171,11 @@ export class ObjectGroupQuery {
   /** Begins a negated where clause on selected group values. */
   whereNot(path: string): ObjectGroupWhereBuilder {
     return new ObjectGroupWhereBuilder(this, path, true);
+  }
+
+  /** Begins a where clause against each selected group value itself. */
+  whereSelf(): ObjectGroupWhereBuilder {
+    return new ObjectGroupWhereBuilder(this, "");
   }
 
   /** Filters selected group values using a DSL expression. */
@@ -170,34 +225,42 @@ export class ObjectGroupQuery {
       );
     }
 
-    const boundExpression = expression.replace(
-      /\$([a-zA-Z_][a-zA-Z0-9_]*)/g,
-      (_match, name: string) => {
-        if (name !== placeholders[0]) {
-          return _match;
-        }
-        if (typeof param === "string") {
-          return `'${param.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}'`;
-        }
-        if (typeof param === "number" || typeof param === "bigint") {
-          return String(param);
-        }
-        if (typeof param === "boolean") {
-          return param ? "true" : "false";
-        }
-        if (param === null) {
-          return "null";
-        }
-        if (param === undefined) {
-          return "undefined";
-        }
-        throw new Error(
-          `Unsupported placeholder value type: ${typeof param}. Use string, number, bigint, boolean, null, or undefined.`,
-        );
-      },
-    );
+    const boundExpression = this._bindExpressionParams(expression, {
+      [placeholders[0]]: param,
+    });
 
     return this.filter(boundExpression, options);
+  }
+
+  /** Conditionally applies filter() when all provided params are defined. */
+  filterIfAllDefined(
+    expression: string,
+    params: Record<string, any>,
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      decimals?: number;
+      coerceNumericStrings?: boolean;
+    },
+  ): ObjectGroupQuery {
+    if (Array.isArray(params)) {
+      throw new Error(
+        "filterIfAllDefined() expects an object map of params (e.g. { minPrice, maxPrice }). Array params are not supported.",
+      );
+    }
+
+    for (const value of Object.values(params)) {
+      if (value === null || value === undefined) {
+        return this;
+      }
+    }
+
+    if (/\$[a-zA-Z_][a-zA-Z0-9_]*/.test(expression)) {
+      const boundExpression = this._bindExpressionParams(expression, params);
+      return this.filter(boundExpression, options);
+    }
+
+    return this.filter(expression, options);
   }
 
   /** Filters selected group values where value at path is in the provided list. */
@@ -246,6 +309,10 @@ export class ObjectGroupQuery {
           return false;
         },
       });
+    }
+
+    if (path === "") {
+      return this._applyWhereClause({ $in: values });
     }
 
     return this._applyWhereClause({ [path]: { $in: values } });
@@ -299,7 +366,31 @@ export class ObjectGroupQuery {
       });
     }
 
+    if (path === "") {
+      return this._applyWhereClause({ $nin: values });
+    }
+
     return this._applyWhereClause({ [path]: { $nin: values } });
+  }
+
+  /** Filters selected group values where key(s) at path do not exist. */
+  whereMissing(path: string | string[]): ObjectGroupQuery {
+    if (Array.isArray(path)) {
+      return this._applyWhereClause({
+        $and: path.map((p) => ({ [p]: { $exists: false } })),
+      });
+    }
+    return this._applyWhereClause({ [path]: { $exists: false } });
+  }
+
+  /** Filters selected group values where key(s) at path exist. */
+  whereExists(path: string | string[]): ObjectGroupQuery {
+    if (Array.isArray(path)) {
+      return this._applyWhereClause({
+        $and: path.map((p) => ({ [p]: { $exists: true } })),
+      });
+    }
+    return this._applyWhereClause({ [path]: { $exists: true } });
   }
 
   /** Filters selected group values where all provided field-value pairs match exactly. */
@@ -765,6 +856,13 @@ export class ObjectGroupWhereBuilder {
   private opts: Required<WhereOptions> = { caseInsensitive: false, trim: true };
   private negate: boolean;
 
+  private _buildClause(condition: unknown): any {
+    if (this.path === "") {
+      return condition;
+    }
+    return { [this.path]: condition };
+  }
+
   constructor(
     private readonly parent: ObjectGroupQuery,
     private readonly path: string,
@@ -862,16 +960,16 @@ export class ObjectGroupWhereBuilder {
 
     if (typeof value === "string") {
       const regex = makeRegex(value, "exact", this.opts);
-      return this.parent._applyWhereClause({
-        [this.path]: this.negate ? { $not: regex } : regex,
-      });
+      return this.parent._applyWhereClause(
+        this._buildClause(this.negate ? { $not: regex } : regex),
+      );
     }
 
     if (this.negate) {
-      return this.parent._applyWhereClause({ [this.path]: { $ne: value } });
+      return this.parent._applyWhereClause(this._buildClause({ $ne: value }));
     }
 
-    return this.parent._applyWhereClause({ [this.path]: value });
+    return this.parent._applyWhereClause(this._buildClause(value));
   }
 
   eq(
@@ -938,9 +1036,9 @@ export class ObjectGroupWhereBuilder {
     }
 
     const regex = makeRegex(value, "contains", this.opts);
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._applyWhereClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   startsWith(
@@ -957,9 +1055,9 @@ export class ObjectGroupWhereBuilder {
     }
 
     const regex = makeRegex(value, "startsWith", this.opts);
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._applyWhereClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   endsWith(
@@ -976,15 +1074,15 @@ export class ObjectGroupWhereBuilder {
     }
 
     const regex = makeRegex(value, "endsWith", this.opts);
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._applyWhereClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   matches(regex: RegExp): ObjectGroupQuery {
-    return this.parent._applyWhereClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._applyWhereClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   greaterThan(

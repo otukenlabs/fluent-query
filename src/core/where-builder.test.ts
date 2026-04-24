@@ -483,6 +483,66 @@ describe("WhereBuilder", () => {
       expect(result[0].name).toBe("Bob");
     });
 
+    it("should support notIn() as shorthand for not().in()", () => {
+      const result = query(testData)
+        .array("users")
+        .where("name")
+        .notIn(["Alice", "Charlie"])
+        .all();
+
+      expect(result).toHaveLength(1);
+      expect(result[0].name).toBe("Bob");
+    });
+
+    it("should support between() for inclusive numeric ranges", () => {
+      const result = query({
+        users: [
+          { id: 1, score: "49" },
+          { id: 2, score: "50" },
+          { id: 3, score: 75 },
+          { id: 4, score: "100" },
+          { id: 5, score: "101" },
+        ],
+      })
+        .array("users")
+        .where("score")
+        .between(50, 100)
+        .all();
+
+      expect(result.map((user) => user.id)).toEqual([2, 3, 4]);
+    });
+
+    it("should support negated between() via not()", () => {
+      const result = query({
+        users: [
+          { id: 1, score: 49 },
+          { id: 2, score: 50 },
+          { id: 3, score: 75 },
+          { id: 4, score: 100 },
+          { id: 5, score: 101 },
+        ],
+      })
+        .array("users")
+        .where("score")
+        .not()
+        .between(50, 100)
+        .all();
+
+      expect(result.map((user) => user.id)).toEqual([1, 5]);
+    });
+
+    it("should throw for between() when min is greater than max", () => {
+      expect(() =>
+        query({ users: [{ score: 10 }] })
+          .array("users")
+          .where("score")
+          .between(100, 50)
+          .all(),
+      ).toThrow(
+        'between("score") requires min to be less than or equal to max.',
+      );
+    });
+
     it("should throw for in() with empty values", () => {
       expect(() =>
         query(testData)

@@ -294,6 +294,53 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
+   * Negated membership match for values in a list.
+   */
+  notIn(
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    return this.not().in(values, options);
+  }
+
+  /**
+   * Inclusive numeric range comparison.
+   */
+  between(
+    min: number,
+    max: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      throw new Error(
+        `between("${this.path}") requires finite numeric min and max values.`,
+      );
+    }
+
+    if (min > max) {
+      throw new Error(
+        `between("${this.path}") requires min to be less than or equal to max.`,
+      );
+    }
+
+    if (this.negate) {
+      return this.parent._pushClause({
+        $or: [
+          buildNumericComparisonClause(this.path, "lt", min, options),
+          buildNumericComparisonClause(this.path, "gt", max, options),
+        ],
+      });
+    }
+
+    return this.parent._pushClause({
+      $and: [
+        buildNumericComparisonClause(this.path, "gte", min, options),
+        buildNumericComparisonClause(this.path, "lte", max, options),
+      ],
+    });
+  }
+
+  /**
    * Partial "contains" match (string).
    *
    * @example

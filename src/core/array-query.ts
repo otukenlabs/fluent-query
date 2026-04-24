@@ -72,7 +72,7 @@ export function _setJsonQueryRootFactory(
 export class ArrayQuery<
   TItem,
   TMode extends "bound" | "unbound" = "bound",
-  TCanToRoot extends boolean = TMode extends "bound" ? true : false,
+  _TCanToRoot extends boolean = TMode extends "bound" ? true : false,
 > {
   // ── Private state ──────────────────────────────────────────────────────
 
@@ -84,6 +84,7 @@ export class ArrayQuery<
   private readonly _sortPath: string | undefined;
   private readonly _sortDirection: "asc" | "desc";
   private readonly _sortNulls: "last" | "first";
+  private readonly _sortCoerceNumericStrings: boolean;
 
   // ── Constructor (private) ──────────────────────────────────────────────
 
@@ -96,6 +97,7 @@ export class ArrayQuery<
     sortPath: string | undefined,
     sortDirection: "asc" | "desc",
     sortNulls: "last" | "first",
+    sortCoerceNumericStrings: boolean = true,
   ) {
     this.items = items;
     this.steps = steps;
@@ -105,6 +107,7 @@ export class ArrayQuery<
     this._sortPath = sortPath;
     this._sortDirection = sortDirection;
     this._sortNulls = sortNulls;
+    this._sortCoerceNumericStrings = sortCoerceNumericStrings;
   }
 
   // ── Static factories ───────────────────────────────────────────────────
@@ -170,6 +173,7 @@ export class ArrayQuery<
       this._sortPath,
       this._sortDirection,
       this._sortNulls,
+      this._sortCoerceNumericStrings,
     );
   }
 
@@ -247,6 +251,7 @@ export class ArrayQuery<
     const sortPath = this._sortPath;
     const sortDirection = this._sortDirection || "asc";
     const sortNulls = this._sortNulls || "last";
+    const sortCoerceNumericStrings = this._sortCoerceNumericStrings !== false;
 
     if (sortPath === undefined) {
       return items;
@@ -273,10 +278,26 @@ export class ArrayQuery<
         return sortNulls === "last" ? -1 : 1;
       }
 
+      let compareValueA = valueA;
+      let compareValueB = valueB;
+
+      if (
+        sortCoerceNumericStrings &&
+        typeof valueA === "string" &&
+        typeof valueB === "string"
+      ) {
+        const parsedA = Number(valueA.trim());
+        const parsedB = Number(valueB.trim());
+        if (Number.isFinite(parsedA) && Number.isFinite(parsedB)) {
+          compareValueA = parsedA;
+          compareValueB = parsedB;
+        }
+      }
+
       let comparison = 0;
-      if (valueA < valueB) {
+      if (compareValueA < compareValueB) {
         comparison = -1;
-      } else if (valueA > valueB) {
+      } else if (compareValueA > compareValueB) {
         comparison = 1;
       }
 
@@ -951,20 +972,32 @@ export class ArrayQuery<
    */
   sort(
     path: string = "",
-    options?: { direction?: "asc" | "desc"; nulls?: "last" | "first" },
+    options?: {
+      direction?: "asc" | "desc";
+      nulls?: "last" | "first";
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     const direction = options?.direction ?? "asc";
     const nulls = options?.nulls ?? "last";
+    const coerceNumericStrings = options?.coerceNumericStrings !== false;
 
     return new ArrayQuery<TItem, TMode>(
       this.items,
-      [...this.steps, { method: "sort", args: [path, { direction, nulls }] }],
+      [
+        ...this.steps,
+        {
+          method: "sort",
+          args: [path, { direction, nulls, coerceNumericStrings }],
+        },
+      ],
       this.clauses,
       this._arrayPath,
       this.metadata,
       path,
       direction,
       nulls,
+      coerceNumericStrings,
     );
   }
 
@@ -2408,6 +2441,7 @@ export class ArrayQuery<
       this._sortPath,
       this._sortDirection,
       this._sortNulls,
+      this._sortCoerceNumericStrings,
     );
   }
 

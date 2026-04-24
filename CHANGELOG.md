@@ -23,6 +23,9 @@
 - **ObjectGroupQuery.include(keyOrKeys)** / **exclude(keyOrKeys)**: group-key selection helpers now accept either a single string key or a string array
 - **ObjectGroupQuery.whereIn(path, values)** / **whereNotIn(path, values)** / **whereAll(criteria)** / **whereAny(criteria)** / **whereNone(criteria)**: group-level criteria filtering APIs with parity to array-level shorthand semantics
 - **ObjectGroupQuery.filter(expression, options?)** and **filterIfDefined(expression, param, options?)**: expression-based group filtering over selected group values
+- **ObjectGroupQuery.filterIfAllDefined(expression, params, options?)**: expression-based group filtering over selected group values, gated until all provided params are defined
+- **ObjectGroupQuery.whereMissing(path)** / **whereExists(path)**: group-level existence filters for missing/present paths (supports `string[]` to require all paths)
+- **ObjectGroupQuery.whereSelf()**: group-level where-builder entry point for comparing each selected group value directly
 - **ObjectGroupQuery.sort(path?, options?)**: group-level sorting by nested value (or by group value itself when path is omitted/empty), with `options: { direction?: "asc" | "desc"; nulls?: "last" | "first" }`, affecting `entries()`/`values()` order
 - **ObjectGroupQuery.pick(pathOrPaths, ...additionalPaths)**: projection over selected group values while remaining chainable on `ObjectGroupQuery`
 - **toRoot(path?)**: bound `ArrayQuery` write-back helper that immutably writes current array results into root JSON (defaulting to original `.array(...)` path) and returns `JsonQueryRoot` for root-level chaining such as `.diff(...)`
@@ -31,6 +34,8 @@
 - **has(key, value, options?)**: boolean terminal shorthand for single key/value checks, equivalent to `hasAll({ [key]: value }, options)`, across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`
 - **find(pathOrProperty, options?)** supports scope controls via `scope: "top-level" | "deep"` (default is `"deep"`) across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`
 - **WhereBuilder.in(values)**: membership terminal for `where(path)` chains, equivalent to `whereIn(path, values)` with support for `where(path).not().in(values)`
+- **WhereBuilder.notIn(values)**: negated membership terminal shorthand, equivalent to `where(path).not().in(values)`
+- **WhereBuilder.between(min, max, options?)**: inclusive numeric range terminal for `where(path)` chains, with support for numeric-string coercion/null handling options and `where(path).not().between(...)` negation
 - **whereNotIn(path, values)**: array-level negated membership filter shorthand, equivalent to a `$nin` clause on the selected path
 - **whereMissing(path)**: array-level existence shorthand that keeps rows where the path is missing (equivalent to a `$exists: false` clause)
 - **whereExists(path)**: array-level existence shorthand that keeps rows where the path exists (equivalent to a `$exists: true` clause)
@@ -107,6 +112,12 @@
 - `ObjectGroupQuery.whereNone(criteria)`
 - `ObjectGroupQuery.filter(expression, options?)`
 - `ObjectGroupQuery.filterIfDefined(expression, param, options?)`
+- `ObjectGroupQuery.filterIfAllDefined(expression, params, options?)`
+- `ObjectGroupQuery.whereSelf()`
+- `ObjectGroupQuery.whereMissing(path)`
+- `ObjectGroupQuery.whereExists(path)`
+- `WhereBuilder.notIn(values)`
+- `WhereBuilder.between(min, max, options?)`
 - `ObjectGroupQuery.sort(path?, options?)`
 - `ObjectGroupQuery.pick(pathOrPaths, ...additionalPaths)`
 - `ArrayQuery.find(pathOrProperty, options?)`
@@ -142,9 +153,11 @@
 
 - **Unified ArrayQuery internals**: pipeline implementation is consolidated into a single `ArrayQuery<TItem, TMode>` model parameterized by a phantom type (`'bound'` or `'unbound'`). Since only `1.0.0` was published, this reflects pre-release refactoring and does not remove any npm-published public classes.
 - **Sort self-value support**: `ArrayQuery.sort(path?, options?)` and `ObjectGroupQuery.sort(path?, options?)` now treat omitted/empty path as "sort by the current item/value itself" and support nullish placement via `options.nulls`.
+- **Sort numeric-string coercion option**: `ArrayQuery.sort(path?, options?)` now supports `options.coerceNumericStrings` (default `true`) so numeric-string values (for example `"10"`, `"2"`) can sort numerically by default, with opt-out for lexical ordering.
 - **Aggregate self-value support**: `ArrayQuery.sum(path?, options?)`, `average(path?, options?)`, `min(path?)`, and `max(path?)` now support omitted/empty path for primitive arrays. Decimal rounding via `options.decimals` is supported on `sum` and `average`.
 - **Aggregate numeric-string coercion**: `ArrayQuery.sum(path?, options?)` and `average(path?, options?)` now coerce numeric strings (including floating-point strings such as `"50.5"`) to numbers when aggregating; non-numeric values are ignored.
 - **Configurable numeric-string coercion (default true)**: methods touched by numeric coercion updates now expose `coerceNumericStrings?: boolean` and default to coercion enabled. This includes expression filters, equality/membership helpers (including grouped variants), aggregate sum/average helpers, and `ValueArrayQuery` numeric transforms (`abs`, `clamp`, `scale`, `offset`, `round`, `roundSignificant`).
+- **Grouped self-membership parity**: `ObjectGroupQuery.whereSelf().in(values)` and `.not().in(values)` now correctly support exact string membership on group values (for example `"Beta"`, `"Gamma"`) in addition to numeric and numeric-string membership behavior.
 - **Aggregate helper parity**: `aggregate().sum(path?, options?)` and `aggregate().average(path?, options?)` now support omitted/empty path for primitive arrays and `options.decimals`; `aggregate().sumOfProducts(...paths, options?)` now also supports decimal rounding via `options.decimals`.
 - **Filter expression logical operators**: expression filters now support unary logical negation (`not`, `!`), parenthesis grouping, and symbol aliases `&&` / `||` alongside existing `and` / `or`.
 - **String matching API standardized**: removed `.caseSensitive()` and use `.ignoreCase(false)` instead across chain methods, options, and examples.
