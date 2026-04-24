@@ -13,14 +13,15 @@ export function tokenizePath(path: string, methodName: string): PathToken[] {
 
   const tokens: PathToken[] = [];
   const pattern = /([^.[\]]+)|\[(\d+)\]/g;
-  let match: RegExpExecArray | null;
+  let match = pattern.exec(path);
 
-  while ((match = pattern.exec(path)) !== null) {
+  while (match !== null) {
     if (match[1]) {
       tokens.push({ kind: "prop", key: match[1] });
     } else if (match[2]) {
       tokens.push({ kind: "index", index: Number(match[2]) });
     }
+    match = pattern.exec(path);
   }
 
   if (tokens.length === 0) {

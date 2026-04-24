@@ -6,8 +6,8 @@
 import { applyPathAtNode } from "./internal/path-set-engine";
 import {
   isObjectLike,
-  tokenizePath,
   type PathToken,
+  tokenizePath,
 } from "./internal/path-tokens";
 
 export type SetAllUpdate = {

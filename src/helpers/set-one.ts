@@ -1,5 +1,5 @@
-import { ensureTopLevelPath, tokenizePath } from "./internal/path-tokens";
 import { applyFirstDeep, countDeepMatches } from "./internal/path-set-engine";
+import { ensureTopLevelPath, tokenizePath } from "./internal/path-tokens";
 
 export type SetOneOptions = {
   onMultiple?: "throw" | "first";
@@ -9,17 +9,17 @@ export type SetOneOptions = {
 function setTopLevelOne<T>(root: T, path: string, value: unknown): T {
   if (path.includes(".") || path.includes("[") || path.includes("]")) {
     throw new Error(
-      `setOne() with scope \"top-level\" only supports top-level keys. Received \"${path}\".`,
+      `setOne() with scope "top-level" only supports top-level keys. Received "${path}".`,
     );
   }
   ensureTopLevelPath(path, "setOne");
 
   if (root === null || typeof root !== "object") {
-    throw new Error(`setOne() found no matches for path \"${path}\".`);
+    throw new Error(`setOne() found no matches for path "${path}".`);
   }
 
-  if (!Object.prototype.hasOwnProperty.call(root as object, path)) {
-    throw new Error(`setOne() found no matches for path \"${path}\".`);
+  if (!Object.hasOwn(root as object, path)) {
+    throw new Error(`setOne() found no matches for path "${path}".`);
   }
 
   if (Object.is((root as any)[path], value)) {
@@ -46,18 +46,18 @@ function setDeepOne<T>(
   if (onMultiple === "throw") {
     const count = countDeepMatches(root, tokens);
     if (count === 0) {
-      throw new Error(`setOne() found no matches for path \"${path}\".`);
+      throw new Error(`setOne() found no matches for path "${path}".`);
     }
     if (count > 1) {
       throw new Error(
-        `setOne() found ${count} matches for path \"${path}\". Use onMultiple: \"first\" or setAll().`,
+        `setOne() found ${count} matches for path "${path}". Use onMultiple: "first" or setAll().`,
       );
     }
   }
 
   const first = applyFirstDeep(root, tokens, value);
   if (!first.applied) {
-    throw new Error(`setOne() found no matches for path \"${path}\".`);
+    throw new Error(`setOne() found no matches for path "${path}".`);
   }
   return first.updated as T;
 }

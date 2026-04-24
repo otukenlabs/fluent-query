@@ -1,7 +1,7 @@
 import {
   isObjectLike,
-  tokenizePath,
   type PathToken,
+  tokenizePath,
 } from "./internal/path-tokens";
 
 function applyByPath(
@@ -23,7 +23,7 @@ function applyByPath(
         `Path "${path}" does not exist: null/undefined at "${token.key}".`,
       );
     }
-    if (!Object.prototype.hasOwnProperty.call(node, token.key)) {
+    if (!Object.hasOwn(node, token.key)) {
       throw new Error(
         `Path "${path}" does not exist: property "${token.key}" not found.`,
       );

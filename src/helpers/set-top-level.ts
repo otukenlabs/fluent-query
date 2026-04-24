@@ -1,5 +1,5 @@
-import type { SetAllUpdate } from "./set-all";
 import { ensureTopLevelPath } from "./internal/path-tokens";
+import type { SetAllUpdate } from "./set-all";
 
 export function setTopLevelValue<T>(root: T, path: string, value: unknown): T {
   ensureTopLevelPath(path, "set");
@@ -9,7 +9,7 @@ export function setTopLevelValue<T>(root: T, path: string, value: unknown): T {
   }
 
   if (
-    Object.prototype.hasOwnProperty.call(root as object, path) &&
+    Object.hasOwn(root as object, path) &&
     Object.is((root as any)[path], value)
   ) {
     return root;

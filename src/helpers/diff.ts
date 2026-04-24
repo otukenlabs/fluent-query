@@ -24,9 +24,10 @@ function parsePathTokens(path: string): string[] {
   if (!path) return [];
   const tokens: string[] = [];
   const pattern = /([^.[\]]+)|(\[(?:\*|\d+)\])/g;
-  let match: RegExpExecArray | null;
-  while ((match = pattern.exec(path)) !== null) {
+  let match = pattern.exec(path);
+  while (match !== null) {
     tokens.push(match[1] ?? match[2]);
+    match = pattern.exec(path);
   }
   return tokens;
 }

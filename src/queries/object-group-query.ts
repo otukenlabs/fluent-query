@@ -3,9 +3,10 @@
  * @description ObjectGroupQuery helper for selecting child objects under a "groups" object.
  */
 
+import sift from "sift";
 import { ArrayQuery } from "../core/array-query";
 import { parseCompositeFilterExpression } from "../filters/logical-operators";
-import { compactValue, type CompactOptions } from "../helpers/compact";
+import { type CompactOptions, compactValue } from "../helpers/compact";
 import { diffValues } from "../helpers/diff";
 import { hasAllInAny } from "../helpers/has-all";
 import { buildNumericComparisonClause } from "../helpers/numeric-comparison";
@@ -16,18 +17,17 @@ import {
   replaceValueByScope,
 } from "../helpers/replace-value";
 import {
+  type SetAllUpdate,
   setAllByPathOccurrences,
   setAllByPathOccurrencesBatch,
-  type SetAllUpdate,
 } from "../helpers/set-all";
 import { setPathOccurrencesIndividually } from "../helpers/set-each";
-import { setOneByPath, type SetOneOptions } from "../helpers/set-one";
+import { type SetOneOptions, setOneByPath } from "../helpers/set-one";
 import {
   setTopLevelValue,
   setTopLevelValuesBatch,
 } from "../helpers/set-top-level";
 import { unsetByPathStrict } from "../helpers/unset-by-path";
-import sift from "sift";
 import type {
   DiffOptions,
   DiffResult,

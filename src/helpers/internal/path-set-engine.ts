@@ -14,7 +14,7 @@ export function canApplyPathAtNode(
     if (!isObjectLike(node)) {
       return false;
     }
-    if (!Object.prototype.hasOwnProperty.call(node, token.key)) {
+    if (!Object.hasOwn(node, token.key)) {
       return false;
     }
     return canApplyPathAtNode((node as any)[token.key], tokens, index + 1);
@@ -48,7 +48,7 @@ export function applyPathAtNode(
     if (!isObjectLike(node)) {
       return { updated: node, changed: false };
     }
-    if (!Object.prototype.hasOwnProperty.call(node, token.key)) {
+    if (!Object.hasOwn(node, token.key)) {
       return { updated: node, changed: false };
     }
 
@@ -202,10 +202,7 @@ export function applyFromAbsolutePath(
   const token = absolutePath[index];
 
   if (token.kind === "prop") {
-    if (
-      !isObjectLike(node) ||
-      !Object.prototype.hasOwnProperty.call(node, token.key)
-    ) {
+    if (!isObjectLike(node) || !Object.hasOwn(node, token.key)) {
       return { updated: node, changed: false };
     }
     const child = (node as any)[token.key];

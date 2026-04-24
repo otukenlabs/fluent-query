@@ -3,8 +3,8 @@
  * @description Shared helpers for numeric comparisons with numeric-string support.
  */
 
-import { getByPath } from "./path";
 import type { NumericComparisonOptions } from "../types";
+import { getByPath } from "./path";
 
 type NumericComparisonOperator = "gt" | "gte" | "lt" | "lte";
 

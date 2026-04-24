@@ -288,7 +288,6 @@ export function splitLogicalOperators(expression: string): {
 
     if (token.type === "not") {
       current += (current ? " " : "") + "not";
-      continue;
     }
   }
 

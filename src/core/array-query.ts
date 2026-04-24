@@ -8,26 +8,26 @@
 
 import sift from "sift";
 import { parseCompositeFilterExpression } from "../filters/logical-operators";
-import { compactValue, type CompactOptions } from "../helpers/compact";
+import { type CompactOptions, compactValue } from "../helpers/compact";
+import { diffValues } from "../helpers/diff";
+import { hasAllInAny } from "../helpers/has-all";
 import { getByPath } from "../helpers/path";
-import { setOneByPath, type SetOneOptions } from "../helpers/set-one";
-import {
-  setTopLevelValue,
-  setTopLevelValuesBatch,
-} from "../helpers/set-top-level";
 import {
   replaceManyByScope,
   replaceValueByScope,
 } from "../helpers/replace-value";
 import {
+  type SetAllUpdate,
   setAllByPathOccurrences,
   setAllByPathOccurrencesBatch,
-  type SetAllUpdate,
 } from "../helpers/set-all";
-import { setPathOccurrencesIndividually } from "../helpers/set-each";
-import { hasAllInAny } from "../helpers/has-all";
-import { diffValues } from "../helpers/diff";
 import { setByPathStrict } from "../helpers/set-by-path";
+import { setPathOccurrencesIndividually } from "../helpers/set-each";
+import { type SetOneOptions, setOneByPath } from "../helpers/set-one";
+import {
+  setTopLevelValue,
+  setTopLevelValuesBatch,
+} from "../helpers/set-top-level";
 import { unsetByPathStrict } from "../helpers/unset-by-path";
 import { AggregateQuery } from "../queries/aggregate-query";
 import { IndexQuery } from "../queries/index-query";
@@ -40,14 +40,14 @@ import type {
   FindOptions,
   HasAllOptions,
   Primitive,
-  ReplaceValueOptions,
   ReplaceRule,
+  ReplaceValueOptions,
   SetOptions,
 } from "../types";
 import { isWhereStep, type PipelineStep } from "./pipeline-step";
+import type { JsonQueryRoot } from "./query";
 import { _setArrayQueryRef, QueryResult } from "./query-result";
 import { WhereBuilder } from "./where-builder";
-import type { JsonQueryRoot } from "./query";
 
 let createJsonQueryRoot: ((root: any) => JsonQueryRoot<any>) | undefined;
 

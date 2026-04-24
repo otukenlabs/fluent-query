@@ -3,39 +3,39 @@
  * @description Main query entry point and JsonQueryRoot class.
  */
 
-import { getByPath } from "../helpers/path";
-import { setByPathStrict } from "../helpers/set-by-path";
+import { type CompactOptions, compactValue } from "../helpers/compact";
 import { diffValues } from "../helpers/diff";
 import { hasAllInAny } from "../helpers/has-all";
-import { compactValue, type CompactOptions } from "../helpers/compact";
+import { getByPath } from "../helpers/path";
 import {
   replaceManyByScope,
   replaceValueByScope,
 } from "../helpers/replace-value";
 import {
-  unsetByPathStrict,
-  unsetByPathsStrict,
-  type UnsetOptions,
-} from "../helpers/unset-by-path";
-import {
+  type SetAllUpdate,
   setAllByPathOccurrences,
   setAllByPathOccurrencesBatch,
-  type SetAllUpdate,
 } from "../helpers/set-all";
+import { setByPathStrict } from "../helpers/set-by-path";
 import { setPathOccurrencesIndividually } from "../helpers/set-each";
-import { setOneByPath, type SetOneOptions } from "../helpers/set-one";
+import { type SetOneOptions, setOneByPath } from "../helpers/set-one";
 import {
   setTopLevelValue,
   setTopLevelValuesBatch,
 } from "../helpers/set-top-level";
+import {
+  type UnsetOptions,
+  unsetByPathStrict,
+  unsetByPathsStrict,
+} from "../helpers/unset-by-path";
 import { ObjectGroupQuery } from "../queries/object-group-query";
 import type {
   DiffOptions,
   DiffResult,
   FindOptions,
   HasAllOptions,
-  ReplaceValueOptions,
   ReplaceRule,
+  ReplaceValueOptions,
   SetOptions,
 } from "../types";
 import { _setJsonQueryRootFactory, ArrayQuery } from "./array-query";
@@ -259,7 +259,7 @@ export class JsonQueryRoot<TRoot> {
     const source = target as Record<string, unknown>;
     const updated: Record<string, unknown> = {};
     for (const key of keyList) {
-      if (Object.prototype.hasOwnProperty.call(source, key)) {
+      if (Object.hasOwn(source, key)) {
         updated[key] = source[key];
       }
     }
@@ -306,7 +306,7 @@ export class JsonQueryRoot<TRoot> {
     }
 
     const source = target as Record<string, unknown>;
-    if (!Object.prototype.hasOwnProperty.call(source, fromKey)) {
+    if (!Object.hasOwn(source, fromKey)) {
       if ((options?.onMissing ?? "ignore") === "throw") {
         throw new Error(`Key "${fromKey}" not found at path "${path}".`);
       }
@@ -315,7 +315,7 @@ export class JsonQueryRoot<TRoot> {
 
     if (
       fromKey !== toKey &&
-      Object.prototype.hasOwnProperty.call(source, toKey) &&
+      Object.hasOwn(source, toKey) &&
       (options?.onExisting ?? "throw") === "throw"
     ) {
       throw new Error(`Key "${toKey}" already exists at path "${path}".`);

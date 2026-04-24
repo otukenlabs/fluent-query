@@ -1,7 +1,7 @@
 import {
   isObjectLike,
-  tokenizePath,
   type PathToken,
+  tokenizePath,
 } from "./internal/path-tokens";
 
 export type UnsetOptions = {
@@ -36,7 +36,7 @@ function applyUnsetByPath(
       return node;
     }
 
-    if (!Object.prototype.hasOwnProperty.call(node, token.key)) {
+    if (!Object.hasOwn(node, token.key)) {
       if (onMissing === "throw") {
         throw missingError(path, `property "${token.key}" not found`);
       }

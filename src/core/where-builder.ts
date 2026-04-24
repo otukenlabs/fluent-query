@@ -3,8 +3,8 @@
  * @description WhereBuilder class for fluent where clause construction.
  */
 
-import { makeRegex } from "../helpers/regex";
 import { buildNumericComparisonClause } from "../helpers/numeric-comparison";
+import { makeRegex } from "../helpers/regex";
 import type {
   NumericComparisonOptions,
   Primitive,

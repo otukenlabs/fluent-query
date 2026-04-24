@@ -71,7 +71,7 @@ export function getByPath(obj: unknown, path: string, strict = false): any {
       continue;
     }
 
-    if (!Object.prototype.hasOwnProperty.call(current as object, segment)) {
+    if (!Object.hasOwn(current as object, segment)) {
       throw new Error(
         `Path "${path}" does not exist: property "${segment}" not found.`,
       );

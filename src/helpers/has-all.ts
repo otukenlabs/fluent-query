@@ -83,7 +83,7 @@ function criteriaPairExistsInSubtree(
     if (!Array.isArray(current)) {
       const currentObject = current as Record<string, unknown>;
       if (
-        Object.prototype.hasOwnProperty.call(currentObject, key) &&
+        Object.hasOwn(currentObject, key) &&
         deepEqual(expected, currentObject[key])
       ) {
         return true;
