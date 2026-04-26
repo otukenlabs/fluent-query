@@ -1,57 +1,263 @@
 # Changelog
 
-## [2.1.0] - 2026-02-27
-
-### Changed
-
-- **Unified ArrayQuery**: `ArrayPipeline` and `PipelineWhereBuilder` are replaced by a single `ArrayQuery<TItem, TMode>` class parameterized by a phantom type (`'bound'` or `'unbound'`). The public API (`arrayPipeline()`, `.run()`, all chainable methods) is backward-compatible; only the internal type names changed.
-
-### Added
-
-- **`.toRecipe()`**: extract a reusable pipeline from any bound chain or `QueryResult`, with optional `stripTerminal` to swap the terminal at deploy time
-- **`QueryResult<T>`**: `.all()` now returns a `QueryResult` that extends `Array<T>` — passes `Array.isArray()`, supports indexing/spread/iteration, and exposes `.toRecipe()` for recipe extraction
-- **`query(data).run(recipe)`**: apply a recipe (with embedded path) directly to a root object
-- **`bound.run(transform)`**: apply a pure pipeline as a post-processing transform on bound query results
-- **Conditional terminals in unbound mode**: `.all()`, `.count()`, `.first()`, `.exists()` etc. record themselves as steps when called on an unbound pipeline, so the full chain can be replayed via `.run()`
-
-### Removed
-
-- `ArrayPipeline` class (replaced by `ArrayQuery<T, 'unbound'>`)
-- `PipelineWhereBuilder` class (replaced by `WhereBuilder<T, TMode>`)
-
-## [2.0.0] - 2026-02-26
-
-### Added
-
-- **Assignable lazy chains** via `arrayPipeline()`: reusable, data-independent query composition -- record operations once, replay on any array via `.run(items)`
-- `ArrayPipeline` supports all chainable methods (`where`, `whereNot`, `filter`, `sort`, `take`, `drop`, `whereIn`, `whereSift`, `whereAll`, and all `*IfPresent` variants)
-- `PipelineWhereBuilder` proxy mirrors `WhereBuilder` modifiers (`not`, `ignoreCase`, `caseSensitive`, `trim`, `noTrim`) and terminals (`equals`, `contains`, `startsWith`, `endsWith`, `greaterThan`, `lessThan`, etc.)
-- Type-changing transforms (`map`, `map2`, `mapn`, `flatMap`, `scan`, `zip`, `zipWith`) return a new `ArrayPipeline<TOut>`
-- Pipelines are immutable -- each chained call returns a new instance
-
-## [1.1.0] - 2026-02-26
+## [2.0.0] - 2026-02-28
 
 ### Added
 
 - **Map family**: `map`, `map2`, `mapn` for element-wise transformation (chainable, returns fresh `ArrayQuery`)
 - **Reduce/Fold family**: `reduce`/`fold`, `reduce2`/`fold2`, `reducen`/`foldn` for folding arrays into scalar values
 - **flatMap**: map each item to zero or more results, then flatten
+- **expand(path, options?)**: flatten nested arrays from each item by property path; use `{ recursive: true }` for recursive expansion and optional `{ strict: true }` to fail fast on descendant path mismatches
+- **set(path, value, options?)**: immutable single-rule path updates across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery` with scope controls (`scope: "top-level" | "deep"`, default `"top-level"`)
+- **setAll(updates, options?)**: immutable multi-rule path updates using `[{ path, value }, ...]` across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery` with scope controls (`scope: "top-level" | "deep"`, default `"deep"`)
+- **setEach(path, value)**: immutable one-by-one deep updates that return one variant per matched path occurrence across `ArrayQuery`, `JsonQueryRoot`, and selected `ObjectGroupQuery` values (throws when no matches are found)
+- **setOne(path, value, options?)**: immutable single-match updates with cardinality and scope controls (`onMultiple: "throw" | "first"`, `scope: "top-level" | "deep"`) across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`
+- **replaceValue(fromValue, toValue, options?)**: immutable value-based replacement transform across `ArrayQuery`, `JsonQueryRoot`, and selected `ObjectGroupQuery` values, with scope controls (`scope: "top-level" | "deep"`, default `"deep"`; top-level scope replaces only row-level/direct field values) and key filtering via `keySelection: { mode: "include" | "exclude", keys: string[] }`
+- **replaceMany(rules, options?)**: immutable ordered value-replacement transform using rules like `{ from, to }`, with shared scope controls and global key filtering (`keySelection`) across all rules on `ArrayQuery`, `JsonQueryRoot`, and selected `ObjectGroupQuery` values
+- **replaceValueAt(path, fromValue, toValue, options?)**: root-level targeted replacement helper on `JsonQueryRoot` that applies `replaceValue` semantics only within the subtree at `path`, writes back immutably, and returns `JsonQueryRoot`
+- **replaceManyAt(path, rules, options?)**: root-level targeted ordered replacement helper on `JsonQueryRoot` that applies `replaceMany` semantics only within the subtree at `path`, writes back immutably, and returns `JsonQueryRoot`
+- **setAt(path, value, options?)**: exact-path setter on `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`; writes immutably to one specific path relative to each selected item, the root object, or each selected group value respectively; pass `{ createMissing: true }` to create missing intermediate objects/arrays while following dot/bracket path tokens
+- **unset(path, options?) / unsetAll(paths, options?)**: immutable path-removal helpers now available on `ArrayQuery` and `ObjectGroupQuery` for parity with `JsonQueryRoot`, honoring `onMissing: "ignore" | "throw"`
+- **deepClone()**: terminal deep-clone snapshot helper on `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`; returns a fully detached copy of the current result value without mutating the source object/array/group values
+- **sortAt(arrayPath, byPath, options?)**: root-level convenience on `JsonQueryRoot` that sorts an array at `arrayPath` by `byPath`, writes the sorted result back to the same path immutably, and returns `JsonQueryRoot` for continued root-level chaining
+- **ObjectGroupQuery.flatArray(arrayPath)**: primary grouped-array flattening API returning a chainable `ArrayQuery` (for example, `.flatArray("items").where(...).all()`)
+- **ObjectGroupQuery.arrays(arrayPath)**: alias of `flatArray(arrayPath)` for compatibility
+- **ObjectGroupQuery.where(path)** / **whereNot(path)**: where-builder entry points over selected group values, returning `ObjectGroupQuery` after terminals (for fluent group filtering)
+- **ObjectGroupQuery.include(keyOrKeys)** / **exclude(keyOrKeys)**: group-key selection helpers now accept either a single string key or a string array
+- **ObjectGroupQuery.whereIn(path, values)** / **whereNotIn(path, values)** / **whereAll(criteria)** / **whereAny(criteria)** / **whereNone(criteria)**: group-level criteria filtering APIs with parity to array-level shorthand semantics
+- **ObjectGroupQuery.filter(expression, options?)** and **filterIfDefined(expression, param, options?)**: expression-based group filtering over selected group values
+- **ObjectGroupQuery.filterIfAllDefined(expression, params, options?)**: expression-based group filtering over selected group values, gated until all provided params are defined
+- **ObjectGroupQuery.whereSift(siftQuery)**: raw sift-clause filtering over selected group values
+- **ObjectGroupQuery.whereIfDefined(path, value, options?)** / **whereNotIfDefined(path, value, options?)**: conditional group-level equality filters that no-op for `null`/`undefined` values
+- **ObjectGroupQuery.whereMissing(path)** / **whereExists(path)**: group-level existence filters for missing/present paths (supports `string[]` to require all paths)
+- **ObjectGroupQuery.whereSelf()**: group-level where-builder entry point for comparing each selected group value directly
+- **ObjectGroupQuery.sort(path?, options?)**: group-level sorting by nested value (or by group value itself when path is omitted/empty), with `options: { direction?: "asc" | "desc"; nulls?: "last" | "first" }`, affecting `entries()`/`values()` order
+- **ObjectGroupQuery.pick(pathOrPaths, ...additionalPaths)**: projection over selected group values while remaining chainable on `ObjectGroupQuery`
+- **toRoot(path?)**: bound `ArrayQuery` write-back helper that immutably writes current array results into root JSON (defaulting to original `.array(...)` path) and returns `JsonQueryRoot` for root-level chaining such as `.diff(...)`
+- **diff(expected, options?)**: structured deep-comparison terminal returning `{ equal, mismatches, truncated? }` across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`, with `unorderedArrays` (boolean or wildcard path list), `maxMismatches`, and wildcard `ignorePaths` exclusion support
+- **hasAll(criteria, options?)**: boolean terminal that returns `true` when any selected value contains all provided key/value pairs (`scope` defaults to `"top-level"`; use `"deep"` to match each pair anywhere in that value's subtree) across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`
+- **has(key, value, options?)**: boolean terminal shorthand for single key/value checks, equivalent to `hasAll({ [key]: value }, options)`, across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`
+- **find(pathOrProperty, options?)** supports scope controls via `scope: "top-level" | "deep"` (default is `"deep"`) across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`
+- **WhereBuilder.in(values)**: membership terminal for `where(path)` chains, equivalent to `whereIn(path, values)` with support for `where(path).not().in(values)`
+- **WhereBuilder.notIn(values)**: negated membership terminal shorthand, equivalent to `where(path).not().in(values)`
+- **WhereBuilder.between(min, max, options?)**: inclusive numeric range terminal for `where(path)` chains, with support for numeric-string coercion/null handling options and `where(path).not().between(...)` negation
+- **whereNotIn(path, values)**: array-level negated membership filter shorthand, equivalent to a `$nin` clause on the selected path
+- **whereMissing(path)**: array-level existence shorthand that keeps rows where the path is missing (equivalent to a `$exists: false` clause)
+- **whereExists(path)**: array-level existence shorthand that keeps rows where the path exists (equivalent to a `$exists: true` clause)
+  Both methods accept a `string[]` to match multiple paths at once (all must be missing/present).
+- **whereAny(criteria)**: array-level exact-match shortcut that keeps rows matching at least one key/value pair from a criteria object
+- **whereNone(criteria)**: array-level exact-match shortcut that keeps rows matching none of the key/value pairs from a criteria object
+- **whereSelf()**: array-level where-builder entry point for primitive arrays, equivalent to starting a where-chain on the current item value
 - **scan**: like reduce but returns all intermediate accumulator values (length n+1)
 - **take/drop**: positional sublists from filtered results
 - **takeWhile/dropWhile**: predicate-based sublists
 - **partition**: split filtered items into `[matching, nonMatching]` tuple of `ArrayQuery`
 - **zip/zipWith**: pair or combine items with an external array (truncates to shorter)
+- **Assignable lazy chains** via `arrayPipeline()`: reusable, data-independent query composition -- record operations once, replay on any array via `.run(items)`
+- `arrayPipeline()` supports all chainable methods (`where`, `whereNot`, `filter`, `sort`, `take`, `drop`, `whereIn`, `whereSift`, `whereAll`, and all `*IfDefined` variants)
+- Unbound `where(...)` chains support the same modifiers (`not`, `ignoreCase`, `trim`, `noTrim`) and terminals (`equals`, `contains`, `startsWith`, `endsWith`, `greaterThan`, `lessThan`, etc.) as bound queries
+- Type-changing transforms (`map`, `map2`, `mapn`, `flatMap`, `scan`, `zip`, `zipWith`) return a new unbound pipeline with the updated output type
+- Pipelines are immutable -- each chained call returns a new instance
+- **`.toRecipe()`**: extract a reusable pipeline from any bound chain or `QueryResult`, with optional `stripTerminal` to swap the terminal at deploy time
+- **`QueryResult<T>`**: `.all()` now returns a `QueryResult` that extends `Array<T>` — passes `Array.isArray()`, supports indexing/spread/iteration, and exposes `.toRecipe()` for recipe extraction
+- **`query(data).run(recipe)`**: apply a recipe (with embedded path) directly to a root object
+- **`bound.run(transform)`**: apply a pure pipeline as a post-processing transform on bound query results
+- **Conditional terminals in unbound mode**: `.all()`, `.count()`, `.first()`, `.exists()` etc. record themselves as steps when called on an unbound pipeline, so the full chain can be replayed via `.run()`
+- **Bound boolean terminal guard**: `.exists()` and `.every()` are now hidden at the TypeScript level when called directly after a fresh bound selection from `.array(...)`, `.flatArray(...)`, or `.arrays(...)`; if bypassed, they still throw at runtime. Add a narrowing step first (for example `where(...)`, `filter(...)`, `take(...)`, or `drop(...)`)
+- **Numeric-string comparisons**: numeric where-builder comparisons such as `greaterThan()`, `gte()`, `lessThan()`, and `lte()` now accept field values stored as numeric strings (for example `"150.0000"`); non-numeric values throw, while `null`/`undefined` are treated as `0` by default and can be made strict with `{ nullAsZero: false }`
+- **Value type filtering**: added `ValueArrayQuery.ofType(...)` to keep only values of a runtime type (`number`, `string`, `boolean`, `object`, `null`, `array`, etc.) without coercion
+- **Value string helper**: `ValueArrayQuery.string({ case?: "lower" | "upper" })` supports optional case normalization while converting values to strings
+- **Value numeric helpers**: added `ValueArrayQuery.abs()`, `ValueArrayQuery.clamp(min, max)`, `ValueArrayQuery.scale(factor)`, `ValueArrayQuery.offset(delta)`, `ValueArrayQuery.round(decimals, { mode })`, and `ValueArrayQuery.roundSignificant(digits, { mode })` for common numeric transforms and configurable rounding (including `halfEven` tie handling)
+- Added public path helper `getByPath`.
+
+#### API Inventory (new public methods in `2.0.0`)
+
+- `arrayPipeline()`
+- `JsonQueryRoot.run(recipe)`
+- `ArrayQuery.toRecipe(stripTerminal?)`
+- `ArrayQuery.whereSelf()`
+- `ArrayQuery.whereMissing(path)`
+- `ArrayQuery.whereExists(path)`
+- `QueryResult.toRecipe(stripTerminal?)`
+- `ArrayQuery.expand(path)`
+- `ArrayQuery.expand(path, options?)`
+- `ArrayQuery.set(path, value, options?)`
+- `ArrayQuery.setAt(path, value, options?)`
+- `ArrayQuery.unset(path, options?)`
+- `ArrayQuery.unsetAll(paths, options?)`
+- `ArrayQuery.deepClone()`
+- `ArrayQuery.setAll([{ path, value }, ...], options?)`
+- `ArrayQuery.setEach(path, value)`
+- `ArrayQuery.setOne(path, value, options?)`
+- `ArrayQuery.replaceValue(fromValue, toValue, options?)`
+- `JsonQueryRoot.replaceValue(fromValue, toValue, options?)`
+- `JsonQueryRoot.replaceValueAt(path, fromValue, toValue, options?)`
+- `JsonQueryRoot.replaceManyAt(path, rules, options?)`
+- `JsonQueryRoot.setAt(path, value, options?)`
+- `JsonQueryRoot.deepClone()`
+- `ObjectGroupQuery.replaceValue(fromValue, toValue, options?)`
+- `ArrayQuery.diff(expected, options?)`
+- `ArrayQuery.hasAll(criteria, options?)`
+- `ArrayQuery.has(key, value, options?)`
+- `JsonQueryRoot.set(path, value, options?)`
+- `JsonQueryRoot.setAll([{ path, value }, ...], options?)`
+- `JsonQueryRoot.setEach(path, value)`
+- `JsonQueryRoot.setOne(path, value, options?)`
+- `JsonQueryRoot.sortAt(arrayPath, byPath, options?)`
+- `JsonQueryRoot.diff(expected, options?)`
+- `JsonQueryRoot.hasAll(criteria, options?)`
+- `JsonQueryRoot.has(key, value, options?)`
+- `ObjectGroupQuery.set(path, value, options?)`
+- `ObjectGroupQuery.setAt(path, value, options?)`
+- `ObjectGroupQuery.unset(path, options?)`
+- `ObjectGroupQuery.unsetAll(paths, options?)`
+- `ObjectGroupQuery.deepClone()`
+- `ObjectGroupQuery.setAll([{ path, value }, ...], options?)`
+- `ObjectGroupQuery.setEach(path, value)`
+- `ObjectGroupQuery.setOne(path, value, options?)`
+- `ObjectGroupQuery.diff(expected, options?)`
+- `ObjectGroupQuery.hasAll(criteria, options?)`
+- `ObjectGroupQuery.has(key, value, options?)`
+- `ObjectGroupQuery.where(path)`
+- `ObjectGroupQuery.whereNot(path)`
+- `ObjectGroupQuery.whereIn(path, values)`
+- `ObjectGroupQuery.whereNotIn(path, values)`
+- `ObjectGroupQuery.whereAll(criteria)`
+- `ObjectGroupQuery.whereAny(criteria)`
+- `ObjectGroupQuery.whereNone(criteria)`
+- `ObjectGroupQuery.filter(expression, options?)`
+- `ObjectGroupQuery.filterIfDefined(expression, param, options?)`
+- `ObjectGroupQuery.filterIfAllDefined(expression, params, options?)`
+- `ObjectGroupQuery.whereSift(siftQuery)`
+- `ObjectGroupQuery.whereIfDefined(path, value, options?)`
+- `ObjectGroupQuery.whereNotIfDefined(path, value, options?)`
+- `ObjectGroupQuery.whereSelf()`
+- `ObjectGroupQuery.whereMissing(path)`
+- `ObjectGroupQuery.whereExists(path)`
+- `WhereBuilder.notIn(values)`
+- `WhereBuilder.between(min, max, options?)`
+- `ObjectGroupQuery.sort(path?, options?)`
+- `ObjectGroupQuery.pick(pathOrPaths, ...additionalPaths)`
+- `ArrayQuery.find(pathOrProperty, options?)`
+- `JsonQueryRoot.find(pathOrProperty, options?)`
+- `ObjectGroupQuery.find(pathOrProperty, options?)`
+- Conditional filter gates:
+  - `filterIfDefined(expression, param, options?)`
+  - `filterIfAllDefined(expression, params, options?)`
+  - `whereIfDefined(path, value, options?)`
+  - `whereNotIfDefined(path, value, options?)`
+  - `greaterThanIfDefined(path, value)`
+  - `greaterThanOrEqualIfDefined(path, value)`
+  - `lessThanIfDefined(path, value)`
+  - `lessThanOrEqualIfDefined(path, value)`
+  - `containsIfDefined(path, value, options?)`
+  - `notContainsIfDefined(path, value, options?)`
+  - `startsWithIfDefined(path, value, options?)`
+  - `notStartsWithIfDefined(path, value, options?)`
+  - `endsWithIfDefined(path, value, options?)`
+  - `notEndsWithIfDefined(path, value, options?)`
+- `ValueArrayQuery` additions:
+  - `ofType(type)`
+  - `string({ case? })`
+  - `abs()`
+  - `clamp(min, max)`
+  - `scale(factor)`
+  - `offset(delta)`
+  - `round(decimals, { mode? })`
+  - `roundSignificant(digits, { mode? })`
+- Public helper export: `getByPath`
+
+### Changed
+
+- **Unified ArrayQuery internals**: pipeline implementation is consolidated into a single `ArrayQuery<TItem, TMode>` model parameterized by a phantom type (`'bound'` or `'unbound'`). Since only `1.0.0` was published, this reflects pre-release refactoring and does not remove any npm-published public classes.
+- **Sort self-value support**: `ArrayQuery.sort(path?, options?)` and `ObjectGroupQuery.sort(path?, options?)` now treat omitted/empty path as "sort by the current item/value itself" and support nullish placement via `options.nulls`.
+- **Sort numeric-string coercion option**: `ArrayQuery.sort(path?, options?)` now supports `options.coerceNumericStrings` (default `true`) so numeric-string values (for example `"10"`, `"2"`) can sort numerically by default, with opt-out for lexical ordering.
+- **Aggregate self-value support**: `ArrayQuery.sum(path?, options?)`, `average(path?, options?)`, `min(path?)`, and `max(path?)` now support omitted/empty path for primitive arrays. Decimal rounding via `options.decimals` is supported on `sum` and `average`.
+- **Aggregate numeric-string coercion**: `ArrayQuery.sum(path?, options?)` and `average(path?, options?)` now coerce numeric strings (including floating-point strings such as `"50.5"`) to numbers when aggregating; non-numeric values are ignored.
+- **Aggregate pre/post rounding options (scientific workflows)**: `sum(path?, options?)` and `average(path?, options?)` (including `aggregate().sum(...)` / `aggregate().average(...)`) now support per-value pre-rounding via `options.preRoundDecimals` or `options.preRoundSignificantDigits` (mutually exclusive), with optional `options.preRoundMode: "halfUp" | "halfEven"`; and final-result rounding enhancements via `options.finalRoundSignificantDigits` and `options.finalRoundMode` (with `decimals` still available for final decimal-place rounding).
+- **Configurable numeric-string coercion (default true)**: methods touched by numeric coercion updates now expose `coerceNumericStrings?: boolean` and default to coercion enabled. This includes expression filters, equality/membership helpers (including grouped variants), aggregate sum/average helpers, and `ValueArrayQuery` numeric transforms (`abs`, `clamp`, `scale`, `offset`, `round`, `roundSignificant`).
+- **Grouped self-membership parity**: `ObjectGroupQuery.whereSelf().in(values)` and `.not().in(values)` now correctly support exact string membership on group values (for example `"Beta"`, `"Gamma"`) in addition to numeric and numeric-string membership behavior.
+- **Aggregate helper parity**: `aggregate().sum(path?, options?)` and `aggregate().average(path?, options?)` now support omitted/empty path for primitive arrays and `options.decimals`; `aggregate().sumOfProducts(...paths, options?)` now also supports decimal rounding via `options.decimals`.
+- **Filter expression logical operators**: expression filters now support unary logical negation (`not`, `!`), parenthesis grouping, and symbol aliases `&&` / `||` alongside existing `and` / `or`.
+- **String matching API standardized**: removed `.caseSensitive()` and use `.ignoreCase(false)` instead across chain methods, options, and examples.
+- **Callback immutability hardening**: callback inputs for callback-driven transforms/folds are now cloned before invocation in bound mode, preventing callback-side mutation from mutating original source data.
+- **Conditional filter placeholder semantics**: `filterIfDefined`/`filterIfAllDefined` support named placeholders (`$name`) only. `filterIfAllDefined` now uses an object param map for both defined-value gating and placeholder binding.
+- README path-helper guidance and migration notes were consolidated and clarified.
+
+### Breaking Changes
+
+- Renamed conditional methods (exact mappings):
+  - `whereIfPresent` → `whereIfDefined`
+  - `whereNotIfPresent` → `whereNotIfDefined`
+  - `greaterThanIfPresent` → `greaterThanIfDefined`
+  - `greaterThanOrEqualIfPresent` → `greaterThanOrEqualIfDefined`
+  - `lessThanIfPresent` → `lessThanIfDefined`
+  - `lessThanOrEqualIfPresent` → `lessThanOrEqualIfDefined`
+  - `containsIfPresent` → `containsIfDefined`
+  - `notContainsIfPresent` → `notContainsIfDefined`
+  - `startsWithIfPresent` → `startsWithIfDefined`
+  - `notStartsWithIfPresent` → `notStartsWithIfDefined`
+  - `endsWithIfPresent` → `endsWithIfDefined`
+  - `notEndsWithIfPresent` → `notEndsWithIfDefined`
+- Replaced `filterIfPresent(expression, options?)` with:
+  - `filterIfDefined(expression, param, options?)`
+  - `filterIfAllDefined(expression, paramMap, options?)` (object map only)
+- Removed `.caseSensitive()`; use `.ignoreCase(false)`.
+- Renamed `findAll(pathOrProperty, options?)` to `find(pathOrProperty, options?)` across `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`.
+  - Previous usage: `query(data).array("items").findAll("id", { scope: "top-level" }).all()`
+  - New usage: `query(data).array("items").find("id", { scope: "top-level" }).all()`
+- `ObjectGroupQuery.flatArray(arrayPath)` now returns a chainable `ArrayQuery` instead of a plain array.
+  - Previous usage: `query(data).objectGroups("sections").flatArray("items")`
+  - New usage: `query(data).objectGroups("sections").flatArray("items").all()`
+  - Compatibility: `arrays(arrayPath)` remains available as an alias to `flatArray(arrayPath)`.
+- `pluck()` now retains explicit `undefined` leaf values instead of failing for those leaves.
+- `pick()` now returns a chainable `ArrayQuery<Record<string, any>>` instead of a plain array.
+  - Previous usage: `const rows = query(data).array("items").pick(["id", "name"])`
+  - New usage: `const rows = query(data).array("items").pick(["id", "name"]).all()`
+  - Benefit: you can continue chaining after projection (e.g. `.pick(...).where(...).sort(...).all()`).
+- `distinct(path?)` now returns a chainable `ArrayQuery<TItem>` instead of a plain array.
+  - Previous usage: `const unique = query(data).array("items").distinct("type")`
+  - New usage: `const unique = query(data).array("items").distinct("type").all()`
+  - Benefit: you can continue chaining after deduplication (e.g. `.distinct(...).random()` or `.distinct(...).count()`).
+- `sort(path?, options?)` now requires an options object for direction/null placement instead of a direction string.
+  - Previous usage: `query(data).array("items").sort("price", "desc")`
+  - New usage: `query(data).array("items").sort("price", { direction: "desc" })`
+  - New option: `nulls: "last" | "first"` controls placement of `null`/`undefined` values.
+- Expression filters no longer support binary `field not value` syntax.
+  - Previous usage: `.filter("status not 'archived'")`
+  - New usage: `.filter("status != 'archived'")`
+- Renamed root unwrap method `raw()` to `unwrap()` on `JsonQueryRoot`.
 
 ## [1.0.0] - 2026-02-26
 
 Initial release.
 
-- Fluent query builder for JSON arrays with MongoDB-style filters
-- Filter operators: equals, contains, startsWith, endsWith, greaterThan, lessThan, etc.
+- **ObjectGroupQuery.omit(pathOrPaths, ...additionalPaths)**: inverse projection that removes selected fields from each selected group value while keeping `ObjectGroupQuery` chainability
+- **ObjectGroupQuery.compact(options?)**: compaction transform over selected group values (default removes `null`/`undefined`)
+- **JsonQueryRoot.unset(path, options?) / unsetAll(paths, options?)**: immutable root-level path removal helpers with configurable missing-path behavior via `onMissing: "ignore" | "throw"`
+- **JsonQueryRoot.filterAt(path, expression, options?) / filterAtIfDefined(...) / filterAtIfAllDefined(...)**: root-level expression filtering at a target array path with immutable write-back and conditional parameter gating
+- **JsonQueryRoot.pickAt(path, ...) / omitAt(path, ...)**: root-level object projection and omission helpers with immutable write-back at a specific path
+- **JsonQueryRoot.compactAt(path, options?)**: root-level compaction helper that writes compacted values back at the target path
+- **JsonQueryRoot.renameAt(path, oldKey, newKey)**: root-level key rename helper for object values at a target path
+- **JsonQueryRoot.transformAt(path, transformFn)**: root-level callback-based transform helper over a target value with immutable write-back
+- **JsonQueryRoot.objectGroupsAt(path, transformFn)**: root-level grouped-data transform helper that applies an `ObjectGroupQuery` chain and writes selected groups back at path
+- `ObjectGroupQuery.omit(pathOrPaths, ...additionalPaths)`
+- `ObjectGroupQuery.compact(options?)`
+- `JsonQueryRoot.unset(path, options?)`
+- `JsonQueryRoot.unsetAll(paths, options?)`
+- `JsonQueryRoot.filterAt(path, expression, options?)`
+- `JsonQueryRoot.filterAtIfDefined(path, expression, param, options?)`
+- `JsonQueryRoot.filterAtIfAllDefined(path, expression, params, options?)`
+- `JsonQueryRoot.pickAt(pathOrPathsOrMap, ...rest)`
+- `JsonQueryRoot.omitAt(pathOrPaths, ...rest)`
+- `JsonQueryRoot.compactAt(path, options?)`
+- `JsonQueryRoot.renameAt(path, oldKey, newKey)`
+- `JsonQueryRoot.transformAt(path, transformFn)`
+- `JsonQueryRoot.objectGroupsAt(path, transformFn)`
 - Filter expressions with and/or logic
 - Selection methods: first, one, random, nth, last, all
 - Aggregation: sum, average, min, max, count, distinct, groupBy, sumOfProducts
 - Conditional filters: whereIfPresent, filterIfPresent, and variants
-- Value extraction: pluck, pick, findAll
+- Value extraction: pluck, pick, find
 - Path and index queries
 - Sorting with null handling

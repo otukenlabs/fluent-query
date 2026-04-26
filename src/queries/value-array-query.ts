@@ -10,7 +10,7 @@
  */
 export class ValueArrayQuery<TValue = any> {
   /**
-   * @param values Array of values from pluck() or findAll()
+   * @param values Array of values from pluck() or find()
    */
   constructor(private readonly values: TValue[]) {}
 
@@ -107,11 +107,321 @@ export class ValueArrayQuery<TValue = any> {
     return this.values.length;
   }
 
+  private _toFiniteNumberOrThrow(
+    value: unknown,
+    methodName: string,
+    options?: { coerceNumericStrings?: boolean },
+  ): number {
+    if (typeof value === "number" && Number.isFinite(value)) {
+      return value;
+    }
+
+    if (options?.coerceNumericStrings !== false && typeof value === "string") {
+      const trimmed = value.trim();
+      const parsed = Number(trimmed);
+      if (trimmed !== "" && Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+
+    throw new Error(
+      `Cannot apply ${methodName}() to non-finite number value: ${JSON.stringify(value)}. Use ofType('number') or number() first.`,
+    );
+  }
+
+  /**
+   * Keeps only values matching the provided runtime type.
+   * No coercion is performed.
+   *
+   * Supported types: string, number, boolean, bigint, symbol, undefined,
+   * function, object, null, array.
+   *
+   * @param type Runtime type to keep
+   * @returns ValueArrayQuery with values of the requested type
+   * @example
+   * ```ts
+   * query(data).array('items').pluck('value').ofType('number').all()
+   * // [1, '3', 'john', 5] → [1, 5]
+   * ```
+   */
+  ofType(
+    type:
+      | "string"
+      | "number"
+      | "boolean"
+      | "bigint"
+      | "symbol"
+      | "undefined"
+      | "function"
+      | "object"
+      | "null"
+      | "array",
+  ): ValueArrayQuery<any> {
+    const filtered = this.values.filter((value) => {
+      if (type === "null") return value === null;
+      if (type === "array") return Array.isArray(value);
+      if (type === "object") {
+        return (
+          value !== null && !Array.isArray(value) && typeof value === "object"
+        );
+      }
+      return typeof value === type;
+    });
+
+    return new ValueArrayQuery(filtered);
+  }
+
+  /**
+   * Applies Math.abs() to all number values.
+   *
+   * @returns ValueArrayQuery with absolute number values
+   * @throws Throws if any value is not a finite number
+   * @example
+   * ```ts
+   * query(data).array('items').pluck('delta').abs().all()
+   * // [-3, 2, -1.5] → [3, 2, 1.5]
+   * ```
+   */
+  abs(options?: { coerceNumericStrings?: boolean }): ValueArrayQuery<number> {
+    const absolute = this.values.map((value) => {
+      const numericValue = this._toFiniteNumberOrThrow(value, "abs", options);
+      return Math.abs(numericValue);
+    });
+
+    return new ValueArrayQuery(absolute);
+  }
+
+  /**
+   * Limits number values into the inclusive range [min, max].
+   *
+   * @param min Lower bound (inclusive)
+   * @param max Upper bound (inclusive)
+   * @returns ValueArrayQuery with clamped number values
+   * @throws Throws if bounds are invalid or any value is not a finite number
+   * @example
+   * ```ts
+   * query(data).array('items').pluck('score').clamp(0, 100).all()
+   * // [-10, 40, 120] → [0, 40, 100]
+   * ```
+   */
+  clamp(
+    min: number,
+    max: number,
+    options?: { coerceNumericStrings?: boolean },
+  ): ValueArrayQuery<number> {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      throw new Error("clamp(min, max) expects finite number bounds.");
+    }
+    if (min > max) {
+      throw new Error("clamp(min, max) expects min to be <= max.");
+    }
+
+    const clamped = this.values.map((value) => {
+      const numericValue = this._toFiniteNumberOrThrow(value, "clamp", options);
+      return Math.min(max, Math.max(min, numericValue));
+    });
+
+    return new ValueArrayQuery(clamped);
+  }
+
+  /**
+   * Multiplies each number value by the provided factor.
+   *
+   * @param factor Multiplication factor
+   * @returns ValueArrayQuery with scaled number values
+   * @throws Throws if factor is invalid or any value is not a finite number
+   * @example
+   * ```ts
+   * query(data).array('items').pluck('value').scale(10).all()
+   * // [1.2, 3, -0.5] → [12, 30, -5]
+   * ```
+   */
+  scale(
+    factor: number,
+    options?: { coerceNumericStrings?: boolean },
+  ): ValueArrayQuery<number> {
+    if (!Number.isFinite(factor)) {
+      throw new Error("scale(factor) expects a finite number factor.");
+    }
+
+    const scaled = this.values.map((value) => {
+      const numericValue = this._toFiniteNumberOrThrow(value, "scale", options);
+      return numericValue * factor;
+    });
+
+    return new ValueArrayQuery(scaled);
+  }
+
+  /**
+   * Adds the provided delta to each number value.
+   *
+   * @param delta Additive offset
+   * @returns ValueArrayQuery with offset number values
+   * @throws Throws if delta is invalid or any value is not a finite number
+   * @example
+   * ```ts
+   * query(data).array('items').pluck('temperature').offset(-273.15).all()
+   * // [300, 310] → [26.85, 36.85]
+   * ```
+   */
+  offset(
+    delta: number,
+    options?: { coerceNumericStrings?: boolean },
+  ): ValueArrayQuery<number> {
+    if (!Number.isFinite(delta)) {
+      throw new Error("offset(delta) expects a finite number delta.");
+    }
+
+    const offsetValues = this.values.map((value) => {
+      const numericValue = this._toFiniteNumberOrThrow(
+        value,
+        "offset",
+        options,
+      );
+      return numericValue + delta;
+    });
+
+    return new ValueArrayQuery(offsetValues);
+  }
+
+  /**
+   * Rounds number values to a fixed number of decimal places.
+   *
+   * @param decimals Number of decimal places (integer between 0 and 100)
+   * @param options Rounding mode (`halfUp` by default, or `halfEven`)
+   * @returns ValueArrayQuery with rounded number values
+   * @throws Throws if decimals is out of range or any value is not a finite number
+   * @example
+   * ```ts
+   * query(data).array('items').pluck('price').round(2).all()
+   * // [1.234, 5.678] → [1.23, 5.68]
+   * ```
+   */
+  round(
+    decimals: number,
+    options?: {
+      mode?: "halfUp" | "halfEven";
+      coerceNumericStrings?: boolean;
+    },
+  ): ValueArrayQuery<number> {
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 100) {
+      throw new Error("round(decimals) expects an integer between 0 and 100.");
+    }
+
+    const mode = options?.mode ?? "halfUp";
+
+    const roundHalfEven = (value: number): number => {
+      const absValue = Math.abs(value);
+      const lower = Math.floor(absValue);
+      const fraction = absValue - lower;
+      const epsilon = 1e-12;
+
+      let roundedInt: number;
+      if (fraction > 0.5 + epsilon) {
+        roundedInt = lower + 1;
+      } else if (fraction < 0.5 - epsilon) {
+        roundedInt = lower;
+      } else {
+        roundedInt = lower % 2 === 0 ? lower : lower + 1;
+      }
+
+      return Math.sign(value) * roundedInt;
+    };
+
+    const factor = 10 ** decimals;
+    const rounded = this.values.map((value) => {
+      const numericValue = this._toFiniteNumberOrThrow(value, "round", options);
+      if (mode === "halfEven") {
+        return roundHalfEven(numericValue * factor) / factor;
+      }
+      return Math.round(numericValue * factor) / factor;
+    });
+
+    return new ValueArrayQuery(rounded);
+  }
+
+  /**
+   * Rounds number values to a fixed number of significant digits.
+   *
+   * @param digits Number of significant digits (integer between 1 and 100)
+   * @param options Rounding mode (`halfUp` by default, or `halfEven`)
+   * @returns ValueArrayQuery with rounded number values
+   * @throws Throws if digits is out of range or any value is not a finite number
+   * @example
+   * ```ts
+   * query(data).array('items').pluck('value').roundSignificant(3).all()
+   * // [1234.56, 0.012345] → [1230, 0.0123]
+   * ```
+   */
+  roundSignificant(
+    digits: number,
+    options?: {
+      mode?: "halfUp" | "halfEven";
+      coerceNumericStrings?: boolean;
+    },
+  ): ValueArrayQuery<number> {
+    if (!Number.isInteger(digits) || digits < 1 || digits > 100) {
+      throw new Error(
+        "roundSignificant(digits) expects an integer between 1 and 100.",
+      );
+    }
+
+    const mode = options?.mode ?? "halfUp";
+
+    const roundHalfEven = (value: number): number => {
+      const absValue = Math.abs(value);
+      const lower = Math.floor(absValue);
+      const fraction = absValue - lower;
+      const epsilon = 1e-12;
+
+      let roundedInt: number;
+      if (fraction > 0.5 + epsilon) {
+        roundedInt = lower + 1;
+      } else if (fraction < 0.5 - epsilon) {
+        roundedInt = lower;
+      } else {
+        roundedInt = lower % 2 === 0 ? lower : lower + 1;
+      }
+
+      return Math.sign(value) * roundedInt;
+    };
+
+    const roundToSignificantHalfEven = (
+      value: number,
+      significantDigits: number,
+    ): number => {
+      if (value === 0) return 0;
+
+      const exponent = Math.floor(Math.log10(Math.abs(value)));
+      const scale = 10 ** (significantDigits - 1 - exponent);
+      const scaled = value * scale;
+      const roundedScaled = roundHalfEven(scaled);
+      return roundedScaled / scale;
+    };
+
+    const rounded = this.values.map((value) => {
+      const numericValue = this._toFiniteNumberOrThrow(
+        value,
+        "roundSignificant",
+        options,
+      );
+      if (mode === "halfEven") {
+        return roundToSignificantHalfEven(numericValue, digits);
+      }
+      return Number(numericValue.toPrecision(digits));
+    });
+
+    return new ValueArrayQuery(rounded);
+  }
+
   /**
    * Convert all values to strings.
    * Returns a new ValueArrayQuery with string values.
    * Converts null/undefined to empty string. Throws for objects.
+   * Optional case transform can be applied to resulting strings.
    *
+   * @param options Optional conversion options
+   * @param options.case Optional case transform for output strings
    * @returns ValueArrayQuery with string values
    * @throws Throws if any value is an object (arrays or plain objects)
    * @example
@@ -126,7 +436,8 @@ export class ValueArrayQuery<TValue = any> {
    * // [null, 'Alice', undefined] → ['', 'Alice', '']
    * ```
    */
-  string(): ValueArrayQuery<string> {
+  string(options?: { case?: "lower" | "upper" }): ValueArrayQuery<string> {
+    const caseMode = options?.case;
     const converted = this.values.map((value) => {
       // Convert null/undefined to empty string
       if (value === null || value === undefined) {
@@ -138,7 +449,14 @@ export class ValueArrayQuery<TValue = any> {
           `Cannot convert object to string: ${JSON.stringify(value)}. Objects must be converted manually.`,
         );
       }
-      return String(value);
+      const asString = String(value);
+      if (caseMode === "lower") {
+        return asString.toLowerCase();
+      }
+      if (caseMode === "upper") {
+        return asString.toUpperCase();
+      }
+      return asString;
     });
     return new ValueArrayQuery(converted);
   }

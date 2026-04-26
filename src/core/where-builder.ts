@@ -3,8 +3,13 @@
  * @description WhereBuilder class for fluent where clause construction.
  */
 
+import { buildNumericComparisonClause } from "../helpers/numeric-comparison";
 import { makeRegex } from "../helpers/regex";
-import type { Primitive, WhereOptions } from "../types";
+import type {
+  NumericComparisonOptions,
+  Primitive,
+  WhereOptions,
+} from "../types";
 import type { ArrayQuery } from "./array-query";
 
 /**
@@ -19,8 +24,8 @@ import type { ArrayQuery } from "./array-query";
  * const results = query(resp)
  * .array('items')
  * .where('type')
- * .contains('pre')
  * .ignoreCase()
+ * .contains('pre')
  * .all();
  * ```
  *
@@ -29,14 +34,21 @@ import type { ArrayQuery } from "./array-query";
  * const results = query(resp)
  * .array('items')
  * .where('type')
- * .caseSensitive()
+ * .ignoreCase(false)
  * .equals('Premium')
  * .all();
  * ```
  */
 export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
-  private opts: Required<WhereOptions> = { caseInsensitive: true, trim: true };
+  private opts: Required<WhereOptions> = { caseInsensitive: false, trim: true };
   private negate: boolean;
+
+  private _buildClause(condition: unknown): any {
+    if (this.path === "") {
+      return condition;
+    }
+    return { [this.path]: condition };
+  }
 
   constructor(
     private readonly parent: ArrayQuery<TItem, TMode>,
@@ -65,20 +77,12 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
   }
 
   /**
-   * Makes string matching case-insensitive for this clause.
+   * Configures case-insensitive string matching for this clause.
    *
-   * @defaultValue enabled by default
+   * @defaultValue disabled by default
    */
-  ignoreCase(): this {
-    this.opts.caseInsensitive = true;
-    return this;
-  }
-
-  /**
-   * Makes string matching case-sensitive for this clause.
-   */
-  caseSensitive(): this {
-    this.opts.caseInsensitive = false;
+  ignoreCase(enabled: boolean = true): this {
+    this.opts.caseInsensitive = enabled;
     return this;
   }
 
@@ -102,8 +106,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
 
   /**
    * Exact match:
+   * - For numbers: matches both numeric values and numeric-string field values (e.g., "150.00" matches 150).
    * - For strings: uses a regex if `ignoreCase()` is enabled (so it can be case-insensitive).
-   * - For numbers/booleans: strict equality.
+   * - For booleans: strict equality.
    *
    * @example Basic usage
    * ```ts
@@ -112,6 +117,16 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .where('type')
    * .equals('Premium')
    * .all();
+   * ```
+   *
+   * @example Numeric equality with numeric strings
+   * ```ts
+   * const results = query(resp)
+   * .array('items')
+   * .where('price')
+   * .equals(150)
+   * .all();
+   * // Matches: { price: 150 }, { price: "150" }, { price: "150.00" }
    * ```
    *
    * @example With options (case-sensitive)
@@ -128,7 +143,11 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   equals(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     if (options) {
       if (options.ignoreCase !== undefined) {
@@ -138,16 +157,67 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
         this.opts.trim = options.trim;
       }
     }
-    if (typeof value === "string" && this.opts.caseInsensitive) {
+
+    // Numeric equality: matches both numeric values and numeric-string field values
+    if (typeof value === "number" && Number.isFinite(value)) {
+      const searchValue = value;
+      const path = this.path;
+      const negate = this.negate;
+      const shouldCoerceNumericStrings =
+        options?.coerceNumericStrings !== false;
+
+      const numericClause = {
+        $where: function (this: any) {
+          let fieldValue: any;
+          if (path === "") {
+            fieldValue = this;
+          } else {
+            try {
+              fieldValue = this[path];
+            } catch {
+              return negate; // If error accessing field, negate determines falsy/truthy
+            }
+          }
+
+          // Nullish field values don't match positive, match negative
+          if (fieldValue === null || fieldValue === undefined) {
+            return negate;
+          }
+
+          let matches = false;
+          // Direct number match
+          if (typeof fieldValue === "number" && Number.isFinite(fieldValue)) {
+            matches = fieldValue === searchValue;
+          }
+          // Numeric string match
+          else if (
+            shouldCoerceNumericStrings &&
+            typeof fieldValue === "string"
+          ) {
+            const trimmed = fieldValue.trim();
+            const parsed = Number(trimmed);
+            if (Number.isFinite(parsed)) {
+              matches = parsed === searchValue;
+            }
+          }
+
+          return negate ? !matches : matches;
+        },
+      };
+
+      return this.parent._pushClause(numericClause);
+    }
+
+    if (typeof value === "string") {
       const regex = makeRegex(value, "exact", this.opts);
-      return this.parent._pushClause({
-        [this.path]: this.negate ? { $not: regex } : regex,
-      });
+      return this.parent._pushClause(
+        this._buildClause(this.negate ? { $not: regex } : regex),
+      );
     }
     if (this.negate) {
-      return this.parent._pushClause({ [this.path]: { $ne: value } });
+      return this.parent._pushClause(this._buildClause({ $ne: value }));
     }
-    return this.parent._pushClause({ [this.path]: value });
+    return this.parent._pushClause(this._buildClause(value));
   }
 
   /**
@@ -155,19 +225,119 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    */
   eq(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
     return this.equals(value, options);
   }
 
   /**
-   * Alias for negated {@link equals}.
+   * Negated equality.
+   */
+  notEquals(
+    value: Primitive,
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
+  ): ArrayQuery<TItem, TMode> {
+    return this.not().equals(value, options);
+  }
+
+  /**
+   * Alias for {@link notEquals}.
    */
   ne(
     value: Primitive,
-    options?: { ignoreCase?: boolean; trim?: boolean },
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
   ): ArrayQuery<TItem, TMode> {
-    return this.not().equals(value, options);
+    return this.notEquals(value, options);
+  }
+
+  /**
+   * Membership match for values in a list.
+   *
+   * Equivalent to {@link ArrayQuery.whereIn} for the current `where(path)`.
+   *
+   * @example
+   * ```ts
+   * const results = query(resp)
+   * .array('items')
+   * .where('type')
+   * .in(['Premium', 'Basic'])
+   * .all();
+   * ```
+   */
+  in(
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    if (!Array.isArray(values) || values.length === 0) {
+      throw new Error(
+        `whereIn("${this.path}") requires a non-empty array of values.`,
+      );
+    }
+
+    if (this.negate) {
+      return this.parent.whereNotIn(this.path, values, options);
+    }
+
+    return this.parent.whereIn(this.path, values, options);
+  }
+
+  /**
+   * Negated membership match for values in a list.
+   */
+  notIn(
+    values: Primitive[],
+    options?: { coerceNumericStrings?: boolean },
+  ): ArrayQuery<TItem, TMode> {
+    return this.not().in(values, options);
+  }
+
+  /**
+   * Inclusive numeric range comparison.
+   */
+  between(
+    min: number,
+    max: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      throw new Error(
+        `between("${this.path}") requires finite numeric min and max values.`,
+      );
+    }
+
+    if (min > max) {
+      throw new Error(
+        `between("${this.path}") requires min to be less than or equal to max.`,
+      );
+    }
+
+    if (this.negate) {
+      return this.parent._pushClause({
+        $or: [
+          buildNumericComparisonClause(this.path, "lt", min, options),
+          buildNumericComparisonClause(this.path, "gt", max, options),
+        ],
+      });
+    }
+
+    return this.parent._pushClause({
+      $and: [
+        buildNumericComparisonClause(this.path, "gte", min, options),
+        buildNumericComparisonClause(this.path, "lte", max, options),
+      ],
+    });
   }
 
   /**
@@ -207,9 +377,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
     }
     const regex = makeRegex(value, "contains", this.opts);
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -249,9 +419,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
     }
     const regex = makeRegex(value, "startsWith", this.opts);
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -291,9 +461,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
       }
     }
     const regex = makeRegex(value, "endsWith", this.opts);
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -309,9 +479,9 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * ```
    */
   matches(regex: RegExp): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $not: regex } : regex,
-    });
+    return this.parent._pushClause(
+      this._buildClause(this.negate ? { $not: regex } : regex),
+    );
   }
 
   /**
@@ -327,17 +497,28 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  greaterThan(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $lte: value } : { $gt: value },
-    });
+  greaterThan(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.parent._pushClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "lte" : "gt",
+        value,
+        options,
+      ),
+    );
   }
 
   /**
    * Alias for {@link greaterThan}.
    */
-  gt(value: number): ArrayQuery<TItem, TMode> {
-    return this.greaterThan(value);
+  gt(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.greaterThan(value, options);
   }
 
   /**
@@ -353,17 +534,28 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  greaterThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $lt: value } : { $gte: value },
-    });
+  greaterThanOrEqual(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.parent._pushClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "lt" : "gte",
+        value,
+        options,
+      ),
+    );
   }
 
   /**
    * Alias for {@link greaterThanOrEqual}.
    */
-  gte(value: number): ArrayQuery<TItem, TMode> {
-    return this.greaterThanOrEqual(value);
+  gte(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.greaterThanOrEqual(value, options);
   }
 
   /**
@@ -379,17 +571,28 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  lessThan(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $gte: value } : { $lt: value },
-    });
+  lessThan(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.parent._pushClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "gte" : "lt",
+        value,
+        options,
+      ),
+    );
   }
 
   /**
    * Alias for {@link lessThan}.
    */
-  lt(value: number): ArrayQuery<TItem, TMode> {
-    return this.lessThan(value);
+  lt(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.lessThan(value, options);
   }
 
   /**
@@ -405,16 +608,27 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
    * .all();
    * ```
    */
-  lessThanOrEqual(value: number): ArrayQuery<TItem, TMode> {
-    return this.parent._pushClause({
-      [this.path]: this.negate ? { $gt: value } : { $lte: value },
-    });
+  lessThanOrEqual(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.parent._pushClause(
+      buildNumericComparisonClause(
+        this.path,
+        this.negate ? "gt" : "lte",
+        value,
+        options,
+      ),
+    );
   }
 
   /**
    * Alias for {@link lessThanOrEqual}.
    */
-  lte(value: number): ArrayQuery<TItem, TMode> {
-    return this.lessThanOrEqual(value);
+  lte(
+    value: number,
+    options?: NumericComparisonOptions,
+  ): ArrayQuery<TItem, TMode> {
+    return this.lessThanOrEqual(value, options);
   }
 }
