@@ -21,14 +21,18 @@ import {
   setAllByPathOccurrences,
   setAllByPathOccurrencesBatch,
 } from "../helpers/set-all";
-import { setByPathStrict } from "../helpers/set-by-path";
+import { setByPath, setByPathStrict } from "../helpers/set-by-path";
 import { setPathOccurrencesIndividually } from "../helpers/set-each";
 import { type SetOneOptions, setOneByPath } from "../helpers/set-one";
 import {
   setTopLevelValue,
   setTopLevelValuesBatch,
 } from "../helpers/set-top-level";
-import { unsetByPathStrict } from "../helpers/unset-by-path";
+import {
+  type UnsetOptions,
+  unsetByPathStrict,
+  unsetByPathsStrict,
+} from "../helpers/unset-by-path";
 import { AggregateQuery } from "../queries/aggregate-query";
 import { IndexQuery } from "../queries/index-query";
 import { PathQuery } from "../queries/path-query";
@@ -42,6 +46,7 @@ import type {
   Primitive,
   ReplaceRule,
   ReplaceValueOptions,
+  SetAtOptions,
   SetOptions,
 } from "../types";
 import { isWhereStep, type PipelineStep } from "./pipeline-step";
@@ -1020,6 +1025,16 @@ export class ArrayQuery<
       stepsWithTerminal,
       this._arrayPath,
     ) as any;
+  }
+
+  /**
+   * Returns a fully detached deep clone of all matches.
+   */
+  deepClone(): TMode extends "bound" ? TItem[] : ArrayQuery<TItem, "unbound"> {
+    if (this.items === undefined) {
+      return this._appendStep("deepClone") as any;
+    }
+    return ArrayQuery._cloneForUserFn(this._executeFilter()) as any;
   }
 
   /**
@@ -2346,6 +2361,58 @@ export class ArrayQuery<
     }
 
     return ArrayQuery._bound<TOut>(result, this.metadata) as any;
+  }
+
+  /**
+   * Immutably sets an exact path within each selected item.
+   */
+  setAt(
+    path: string,
+    value: unknown,
+    options?: SetAtOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("setAt", path, value, options);
+    }
+
+    const updated = this._executeFilter().map((item) =>
+      setByPath(item, path, value, {
+        createMissing: options?.createMissing,
+        methodName: "setAt",
+      }),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Immutably removes an exact path from each selected item.
+   */
+  unset(path: string, options?: UnsetOptions): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("unset", path, options);
+    }
+
+    const updated = this._executeFilter().map((item) =>
+      unsetByPathStrict(item, path, options),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
+  }
+
+  /**
+   * Immutably removes multiple paths from each selected item.
+   */
+  unsetAll(
+    paths: ReadonlyArray<string>,
+    options?: UnsetOptions,
+  ): ArrayQuery<TItem, TMode> {
+    if (this.items === undefined) {
+      return this._appendStep("unsetAll", paths, options);
+    }
+
+    const updated = this._executeFilter().map((item) =>
+      unsetByPathsStrict(item, paths, options),
+    );
+    return ArrayQuery._bound<TItem>(updated as TItem[], this.metadata) as any;
   }
 
   /**

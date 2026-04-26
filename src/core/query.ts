@@ -16,7 +16,7 @@ import {
   setAllByPathOccurrences,
   setAllByPathOccurrencesBatch,
 } from "../helpers/set-all";
-import { setByPathStrict } from "../helpers/set-by-path";
+import { setByPath, setByPathStrict } from "../helpers/set-by-path";
 import { setPathOccurrencesIndividually } from "../helpers/set-each";
 import { type SetOneOptions, setOneByPath } from "../helpers/set-one";
 import {
@@ -36,6 +36,7 @@ import type {
   HasAllOptions,
   ReplaceRule,
   ReplaceValueOptions,
+  SetAtOptions,
   SetOptions,
 } from "../types";
 import { _setJsonQueryRootFactory, ArrayQuery } from "./array-query";
@@ -163,11 +164,18 @@ export class JsonQueryRoot<TRoot> {
   }
 
   /**
-   * Returns the underlying root value.
-   * Useful when you want to step out of fluent mode.
+   * Returns the current root by reference (no deep copy).
+   * For a fully detached deep clone, use deepClone().
    */
   unwrap(): TRoot {
     return this.root;
+  }
+
+  /**
+   * Returns a fully detached deep clone of the current root value.
+   */
+  deepClone(): TRoot {
+    return cloneForUserFn(this.root);
   }
 
   /**
@@ -373,6 +381,22 @@ export class JsonQueryRoot<TRoot> {
     const current = getByPath(this.root as any, path, true);
     const next = replaceManyByScope(current, rules, options);
     return new JsonQueryRoot(setByPathStrict(this.root, path, next));
+  }
+
+  /**
+   * Immutably sets an exact root path, optionally creating missing containers.
+   */
+  setAt(
+    path: string,
+    value: unknown,
+    options?: SetAtOptions,
+  ): JsonQueryRoot<TRoot> {
+    return new JsonQueryRoot(
+      setByPath(this.root, path, value, {
+        createMissing: options?.createMissing,
+        methodName: "setAt",
+      }),
+    );
   }
 
   /**

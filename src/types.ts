@@ -109,6 +109,10 @@ export type SetOptions = {
   scope?: "top-level" | "deep";
 };
 
+export type SetAtOptions = {
+  createMissing?: boolean;
+};
+
 export type ReplaceValueOptions = {
   scope?: "top-level" | "deep";
   keySelection?: {

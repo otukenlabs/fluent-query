@@ -21,13 +21,18 @@ import {
   setAllByPathOccurrences,
   setAllByPathOccurrencesBatch,
 } from "../helpers/set-all";
+import { setByPath } from "../helpers/set-by-path";
 import { setPathOccurrencesIndividually } from "../helpers/set-each";
 import { type SetOneOptions, setOneByPath } from "../helpers/set-one";
 import {
   setTopLevelValue,
   setTopLevelValuesBatch,
 } from "../helpers/set-top-level";
-import { unsetByPathStrict } from "../helpers/unset-by-path";
+import {
+  type UnsetOptions,
+  unsetByPathStrict,
+  unsetByPathsStrict,
+} from "../helpers/unset-by-path";
 import type {
   DiffOptions,
   DiffResult,
@@ -38,6 +43,7 @@ import type {
   Primitive,
   ReplaceRule,
   ReplaceValueOptions,
+  SetAtOptions,
   SetOptions,
   WhereOptions,
 } from "../types";
@@ -190,6 +196,65 @@ export class ObjectGroupQuery {
   ): ObjectGroupQuery {
     const clause = parseCompositeFilterExpression(expression, options);
     return this._applyWhereClause(clause);
+  }
+
+  /** Applies a raw sift query to selected group values. */
+  whereSift(siftQuery: any): ObjectGroupQuery {
+    return this._applyWhereClause(siftQuery);
+  }
+
+  /** Conditionally applies where().equals() if value is defined. */
+  whereIfDefined(
+    path: string,
+    value: any,
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
+  ): ObjectGroupQuery {
+    if (value !== null && value !== undefined) {
+      const builder = this.where(path);
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
+      return builder.equals(value, options);
+    }
+    return this;
+  }
+
+  /** Conditionally applies whereNot().equals() if value is defined. */
+  whereNotIfDefined(
+    path: string,
+    value: any,
+    options?: {
+      ignoreCase?: boolean;
+      trim?: boolean;
+      coerceNumericStrings?: boolean;
+    },
+  ): ObjectGroupQuery {
+    if (value !== null && value !== undefined) {
+      const builder = this.whereNot(path);
+      if (options?.ignoreCase !== undefined) {
+        builder.ignoreCase(options.ignoreCase);
+      }
+      if (options?.trim !== undefined) {
+        if (options.trim) {
+          builder.trim();
+        } else {
+          builder.noTrim();
+        }
+      }
+      return builder.equals(value, options);
+    }
+    return this;
   }
 
   /** Conditionally applies filter() when the provided param is defined. */
@@ -563,6 +628,58 @@ export class ObjectGroupQuery {
   }
 
   /**
+   * Immutably sets an exact path inside selected group values.
+   */
+  setAt(
+    path: string,
+    value: unknown,
+    options?: SetAtOptions,
+  ): ObjectGroupQuery {
+    const updated: Record<string, unknown> = {};
+    for (const [key, groupValue] of Object.entries(this.groups)) {
+      updated[key] = this.isKeySelected(key)
+        ? setByPath(groupValue, path, value, {
+            createMissing: options?.createMissing,
+            methodName: "setAt",
+          })
+        : groupValue;
+    }
+
+    return this.cloneWithGroups(updated);
+  }
+
+  /**
+   * Immutably removes an exact path inside selected group values.
+   */
+  unset(path: string, options?: UnsetOptions): ObjectGroupQuery {
+    const updated: Record<string, unknown> = {};
+    for (const [key, groupValue] of Object.entries(this.groups)) {
+      updated[key] = this.isKeySelected(key)
+        ? unsetByPathStrict(groupValue, path, options)
+        : groupValue;
+    }
+
+    return this.cloneWithGroups(updated);
+  }
+
+  /**
+   * Immutably removes multiple paths inside selected group values.
+   */
+  unsetAll(
+    paths: ReadonlyArray<string>,
+    options?: UnsetOptions,
+  ): ObjectGroupQuery {
+    const updated: Record<string, unknown> = {};
+    for (const [key, groupValue] of Object.entries(this.groups)) {
+      updated[key] = this.isKeySelected(key)
+        ? unsetByPathsStrict(groupValue, paths, options)
+        : groupValue;
+    }
+
+    return this.cloneWithGroups(updated);
+  }
+
+  /**
    * Immutably sets one path/value rule inside selected group values.
    */
   set(path: string, value: unknown, options?: SetOptions): ObjectGroupQuery {
@@ -744,6 +861,11 @@ export class ObjectGroupQuery {
     return this.entries().map(([, value]) => value);
   }
 
+  /** Returns a fully detached deep clone of selected groups keyed by group key. */
+  deepClone(): Record<string, unknown> {
+    return cloneForUserFn(Object.fromEntries(this.entries()));
+  }
+
   /**
    * Returns a flattened array from each group value at `arrayPath`.
    * Throws if any group value doesn't contain an array at the path.
@@ -847,6 +969,30 @@ export class ObjectGroupQuery {
     const [, value] = this.randomEntry();
     return value;
   }
+}
+
+function cloneForUserFn<T>(value: T): T {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof globalThis.structuredClone === "function") {
+    return globalThis.structuredClone(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneForUserFn(item)) as T;
+  }
+
+  if (typeof value === "object") {
+    const clone: Record<string, any> = {};
+    for (const [key, val] of Object.entries(value as Record<string, any>)) {
+      clone[key] = cloneForUserFn(val);
+    }
+    return clone as T;
+  }
+
+  return value;
 }
 
 /**

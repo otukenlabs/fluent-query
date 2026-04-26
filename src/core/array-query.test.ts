@@ -1834,6 +1834,153 @@ describe("ArrayQuery", () => {
     });
   });
 
+  describe(".setAt()", () => {
+    it("should set an exact existing nested path within each selected item", () => {
+      const source = {
+        items: [
+          {
+            id: 1,
+            profile: { name: "Grace" },
+            nested: { profile: { name: "Inner" } },
+          },
+        ],
+      };
+
+      const result = query(source)
+        .array("items")
+        .setAt("profile.name", "Ada")
+        .all();
+
+      expect(result[0].profile.name).toBe("Ada");
+      expect(result[0].nested.profile.name).toBe("Inner");
+      expect(source.items[0].profile.name).toBe("Grace");
+    });
+
+    it("should support createMissing for object paths within selected items", () => {
+      const source = {
+        items: [{ id: 1 }],
+      };
+
+      const result = query(source)
+        .array("items")
+        .setAt("profile.name", "Ada", { createMissing: true })
+        .all();
+
+      expect(result[0]).toEqual({
+        id: 1,
+        profile: { name: "Ada" },
+      });
+      expect(source.items[0]).toEqual({ id: 1 });
+    });
+
+    it("should support createMissing for array paths within selected items", () => {
+      const source = {
+        items: [{ id: 1, tags: [] as Array<{ name?: string }> }],
+      };
+
+      const result = query(source)
+        .array("items")
+        .setAt("tags[1].name", "Ada", { createMissing: true })
+        .all();
+
+      expect(result[0].tags[1].name).toBe("Ada");
+      expect(source.items[0].tags).toEqual([]);
+    });
+
+    it("should throw when setAt() receives a missing path by default", () => {
+      const source = {
+        items: [{ id: 1 }],
+      };
+
+      expect(() =>
+        query(source).array("items").setAt("profile.name", "Ada").all(),
+      ).toThrow(
+        'Path "profile.name" does not exist: property "profile" not found.',
+      );
+    });
+  });
+
+  describe(".unset()/.unsetAll()", () => {
+    it("should remove exact paths from each selected item", () => {
+      const source = {
+        items: [
+          {
+            id: 1,
+            profile: { name: "Grace", ssn: "123" },
+            tags: ["a", "b"],
+          },
+        ],
+      };
+
+      const result = query(source)
+        .array("items")
+        .unset("profile.ssn")
+        .unset("tags[1]")
+        .all();
+
+      expect(result[0]).toEqual({
+        id: 1,
+        profile: { name: "Grace" },
+        tags: ["a"],
+      });
+      expect(source.items[0].profile.ssn).toBe("123");
+      expect(source.items[0].tags).toEqual(["a", "b"]);
+    });
+
+    it("should support unsetAll() and strict missing-path behavior", () => {
+      const source = {
+        items: [{ id: 1, profile: { name: "Grace", ssn: "123" } }],
+      };
+
+      const result = query(source)
+        .array("items")
+        .unsetAll(["profile.ssn", "profile.missing"], { onMissing: "ignore" })
+        .all();
+
+      expect(result[0]).toEqual({ id: 1, profile: { name: "Grace" } });
+      expect(() =>
+        query(source)
+          .array("items")
+          .unset("profile.missing", { onMissing: "throw" })
+          .all(),
+      ).toThrow(
+        'Path "profile.missing" does not exist: property "missing" not found.',
+      );
+    });
+  });
+
+  describe(".deepClone()", () => {
+    it("should return fully detached selected items", () => {
+      const source = {
+        items: [
+          {
+            id: 1,
+            profile: { name: "Grace" },
+            settings: { theme: "dark" },
+          },
+        ],
+      };
+
+      const cloned = query(source)
+        .array("items")
+        .setAt("profile.name", "Ada")
+        .deepClone();
+
+      expect(cloned).toEqual([
+        {
+          id: 1,
+          profile: { name: "Ada" },
+          settings: { theme: "dark" },
+        },
+      ]);
+
+      cloned[0].settings.theme = "light";
+      expect(source.items[0].settings.theme).toBe("dark");
+      expect(cloned[0]).not.toBe(source.items[0]);
+      expect(cloned[0].settings).not.toBe(source.items[0].settings);
+    });
+  });
+
   describe(".setOne()", () => {
     it("should throw by default when deep path has multiple matches", () => {
       const source = {
@@ -3086,6 +3233,69 @@ describe("ArrayQuery", () => {
       expect(root.flag).toBe(false);
     });
 
+    it("should support root setAt() for an exact existing nested path", () => {
+      const root = {
+        payload: {
+          user: { profile: { name: "Ada" } },
+        },
+      };
+
+      const updated = query(root)
+        .setAt("payload.user.profile.name", "Grace")
+        .unwrap() as typeof root;
+
+      expect(updated.payload.user.profile.name).toBe("Grace");
+      expect(root.payload.user.profile.name).toBe("Ada");
+    });
+
+    it("should support root setAt() with createMissing for object paths", () => {
+      const root = {
+        payload: {},
+      };
+
+      const updated = query(root)
+        .setAt("payload.user.profile.name", "Ada", { createMissing: true })
+        .unwrap() as typeof root & {
+        payload: {
+          user: { profile: { name: string } };
+        };
+      };
+
+      expect(updated.payload.user.profile.name).toBe("Ada");
+      expect(root.payload).toEqual({});
+    });
+
+    it("should support root setAt() with createMissing for array paths", () => {
+      const root = {
+        payload: {},
+      };
+
+      const updated = query(root)
+        .setAt("payload.items[1].name", "Ada", { createMissing: true })
+        .unwrap() as typeof root & {
+        payload: {
+          items: Array<{ name?: string } | undefined>;
+        };
+      };
+
+      expect(updated.payload.items).toHaveLength(2);
+      expect(updated.payload.items[0]).toBeUndefined();
+      expect(updated.payload.items[1]).toEqual({ name: "Ada" });
+      expect(root.payload).toEqual({});
+    });
+
+    it("should throw on root setAt() when a path is missing by default", () => {
+      const root = {
+        payload: {},
+      };
+
+      expect(() =>
+        query(root).setAt("payload.user.profile.name", "Ada"),
+      ).toThrow(
+        'Path "payload.user.profile.name" does not exist: property "user" not found.',
+      );
+    });
+
     it("should support root setOne() deep first mode", () => {
       const root = {
         a: { value: 1 },
@@ -3602,6 +3812,86 @@ describe("ArrayQuery", () => {
       ).toThrow("filterIfAllDefined() expects an object map of params");
     });
 
+    it("should support objectGroups().whereSift(), whereIfDefined(), and whereNotIfDefined()", () => {
+      const root = {
+        sections: {
+          a: { type: "Premium", priority: 3 },
+          b: { type: "Basic", priority: 1 },
+          c: { type: "premium", priority: 2 },
+        },
+      };
+
+      const groups = query(root).objectGroups("sections");
+
+      expect(
+        groups
+          .whereSift({ priority: { $gte: 2 } })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "c"]);
+
+      expect(
+        groups
+          .whereIfDefined("type", "premium", { ignoreCase: false })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["c"]);
+
+      expect(groups.whereIfDefined("type", undefined)).toBe(groups);
+
+      expect(
+        groups
+          .whereNotIfDefined("type", "premium", { ignoreCase: false })
+          .entries()
+          .map(([key]) => key),
+      ).toEqual(["a", "b"]);
+
+      expect(groups.whereNotIfDefined("type", null)).toBe(groups);
+    });
+
+    it("should support objectGroups().unset() and unsetAll() on selected groups", () => {
+      const root = {
+        sections: {
+          a: {
+            profile: { name: "Grace", ssn: "123" },
+            tags: ["a", "b"],
+          },
+          b: {
+            profile: { name: "Bob", ssn: "999" },
+            tags: ["x", "y"],
+          },
+        },
+      };
+
+      const groups = query(root)
+        .objectGroups("sections")
+        .include(["a", "b"])
+        .exclude(["b"])
+        .unset("profile.ssn")
+        .unsetAll(["tags[1]", "profile.missing"], { onMissing: "ignore" });
+
+      const selected = groups.values() as Array<{
+        profile: { name: string };
+        tags: string[];
+      }>;
+
+      expect(selected[0]).toEqual({
+        profile: { name: "Grace" },
+        tags: ["a"],
+      });
+      expect(root.sections.a.profile.ssn).toBe("123");
+      expect(root.sections.a.tags).toEqual(["a", "b"]);
+      expect(root.sections.b.profile.ssn).toBe("999");
+
+      expect(() =>
+        query(root)
+          .objectGroups("sections")
+          .unset("profile.missing", { onMissing: "throw" }),
+      ).toThrow(
+        'Path "profile.missing" does not exist: property "missing" not found.',
+      );
+    });
+
     it("should support objectGroups().whereSelf(), whereMissing(), and whereExists()", () => {
       const primitiveRoot = {
         sections: {
@@ -4014,6 +4304,99 @@ describe("ArrayQuery", () => {
       expect(root.sections.b.status).toBe("old-b");
     });
 
+    it("should support objectGroups().setAt() for exact nested paths", () => {
+      const root = {
+        sections: {
+          a: {
+            profile: { name: "Grace" },
+            nested: { profile: { name: "Inner" } },
+          },
+          b: {
+            profile: { name: "Blocked" },
+          },
+        },
+      };
+
+      const groups = query(root)
+        .objectGroups("sections")
+        .include(["a", "b"])
+        .exclude(["b"])
+        .setAt("profile.name", "Ada");
+
+      const selected = groups.values() as Array<{
+        profile: { name: string };
+        nested: { profile: { name: string } };
+      }>;
+      expect(selected[0].profile.name).toBe("Ada");
+      expect(selected[0].nested.profile.name).toBe("Inner");
+      expect(root.sections.a.profile.name).toBe("Grace");
+      expect(root.sections.b.profile.name).toBe("Blocked");
+    });
+
+    it("should support objectGroups().setAt() with createMissing", () => {
+      const root = {
+        sections: {
+          a: { id: 1 },
+          b: { id: 2 },
+        },
+      };
+
+      const groups = query(root)
+        .objectGroups("sections")
+        .include(["a", "b"])
+        .exclude(["b"])
+        .setAt("items[1].name", "Ada", { createMissing: true });
+
+      const selected = groups.values() as Array<{
+        id: number;
+        items: Array<{ name?: string }>;
+      }>;
+      expect(selected[0].items[1].name).toBe("Ada");
+      expect(root.sections.a).toEqual({ id: 1 });
+      expect(root.sections.b).toEqual({ id: 2 });
+    });
+
+    it("should throw on objectGroups().setAt() when a path is missing by default", () => {
+      const root = {
+        sections: {
+          a: { id: 1 },
+        },
+      };
+
+      expect(() =>
+        query(root).objectGroups("sections").setAt("profile.name", "Ada"),
+      ).toThrow(
+        'Path "profile.name" does not exist: property "profile" not found.',
+      );
+    });
+
+    it("should support objectGroups().deepClone() as detached selected-group snapshot", () => {
+      const root = {
+        sections: {
+          a: { profile: { name: "Grace" }, settings: { theme: "dark" } },
+          b: { profile: { name: "Bob" }, settings: { theme: "light" } },
+        },
+      };
+
+      const cloned = query(root)
+        .objectGroups("sections")
+        .include(["a", "b"])
+        .exclude(["b"])
+        .deepClone() as Record<
+        string,
+        { profile: { name: string }; settings: { theme: string } }
+      >;
+
+      expect(cloned).toEqual({
+        a: { profile: { name: "Grace" }, settings: { theme: "dark" } },
+      });
+      expect(cloned.a).not.toBe(root.sections.a);
+      expect(cloned.a.settings).not.toBe(root.sections.a.settings);
+
+      cloned.a.settings.theme = "changed";
+      expect(root.sections.a.settings.theme).toBe("dark");
+    });
+
     it("should support objectGroups().setOne() deep first mode", () => {
       const root = {
         sections: {
@@ -4359,7 +4742,7 @@ describe("ArrayQuery", () => {
   });
 
   describe("Additional branch coverage", () => {
-    it("should support root pick string/array forms and unwrap()", () => {
+    it("should support root pick string/array forms, unwrap(), and deepClone()", () => {
       const root = { result: { status: "OK", id: 123 } };
 
       expect(query(root).pick("result.status")).toEqual({
@@ -4370,6 +4753,14 @@ describe("ArrayQuery", () => {
         "result.id": 123,
       });
       expect(query(root).unwrap()).toBe(root);
+
+      const cloned = query(root).deepClone();
+      expect(cloned).toEqual(root);
+      expect(cloned).not.toBe(root);
+      expect(cloned.result).not.toBe(root.result);
+
+      cloned.result.status = "CHANGED";
+      expect(root.result.status).toBe("OK");
     });
 
     it("should throw when objectGroups target is not object and run() path is not array", () => {

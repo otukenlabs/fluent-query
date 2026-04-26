@@ -267,6 +267,27 @@ describe("arrayPipeline (unbound mode)", () => {
     });
   });
 
+  describe("unset/unsetAll", () => {
+    it("removes exact paths via unbound replay", () => {
+      const local = [
+        { id: 1, profile: { name: "Grace", ssn: "123" }, tags: ["a", "b"] },
+      ];
+
+      const pipe = arrayPipeline<any>()
+        .unset("profile.ssn")
+        .unsetAll(["tags[1]", "profile.missing"], { onMissing: "ignore" });
+
+      const result = pipe.run(local).all();
+      expect(result[0]).toEqual({
+        id: 1,
+        profile: { name: "Grace" },
+        tags: ["a"],
+      });
+      expect(local[0].profile.ssn).toBe("123");
+      expect(local[0].tags).toEqual(["a", "b"]);
+    });
+  });
+
   describe("whereIfDefined with null", () => {
     it("skips the filter when value is null", () => {
       const pipe = arrayPipeline<Item>().whereIfDefined("type", null);
@@ -561,6 +582,43 @@ describe("arrayPipeline (unbound mode)", () => {
       expect(() => pipe.run(data).all()).toThrow(
         "set() only supports top-level keys",
       );
+    });
+  });
+
+  describe("setAt", () => {
+    it("replays exact-path item writes and supports createMissing", () => {
+      const data = [{ id: 1 }];
+
+      const pipe = arrayPipeline<(typeof data)[0]>().setAt(
+        "profile.name",
+        "Ada",
+        {
+          createMissing: true,
+        },
+      );
+      const result = pipe.run(data).all();
+
+      expect(result[0]).toEqual({
+        id: 1,
+        profile: { name: "Ada" },
+      });
+      expect(data[0]).toEqual({ id: 1 });
+    });
+  });
+
+  describe("deepClone", () => {
+    it("replays deepClone terminal and returns detached output", () => {
+      const data = [{ id: 1, nested: { value: 10 } }];
+
+      const result = arrayPipeline<(typeof data)[0]>().deepClone().run(data);
+
+      expect(result).toEqual([{ id: 1, nested: { value: 10 } }]);
+      expect(result).not.toBe(data);
+      expect(result[0]).not.toBe(data[0]);
+      expect(result[0].nested).not.toBe(data[0].nested);
+
+      result[0].nested.value = 99;
+      expect(data[0].nested.value).toBe(10);
     });
   });
 

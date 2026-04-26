@@ -16,6 +16,9 @@
 - **replaceMany(rules, options?)**: immutable ordered value-replacement transform using rules like `{ from, to }`, with shared scope controls and global key filtering (`keySelection`) across all rules on `ArrayQuery`, `JsonQueryRoot`, and selected `ObjectGroupQuery` values
 - **replaceValueAt(path, fromValue, toValue, options?)**: root-level targeted replacement helper on `JsonQueryRoot` that applies `replaceValue` semantics only within the subtree at `path`, writes back immutably, and returns `JsonQueryRoot`
 - **replaceManyAt(path, rules, options?)**: root-level targeted ordered replacement helper on `JsonQueryRoot` that applies `replaceMany` semantics only within the subtree at `path`, writes back immutably, and returns `JsonQueryRoot`
+- **setAt(path, value, options?)**: exact-path setter on `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`; writes immutably to one specific path relative to each selected item, the root object, or each selected group value respectively; pass `{ createMissing: true }` to create missing intermediate objects/arrays while following dot/bracket path tokens
+- **unset(path, options?) / unsetAll(paths, options?)**: immutable path-removal helpers now available on `ArrayQuery` and `ObjectGroupQuery` for parity with `JsonQueryRoot`, honoring `onMissing: "ignore" | "throw"`
+- **deepClone()**: terminal deep-clone snapshot helper on `ArrayQuery`, `JsonQueryRoot`, and `ObjectGroupQuery`; returns a fully detached copy of the current result value without mutating the source object/array/group values
 - **sortAt(arrayPath, byPath, options?)**: root-level convenience on `JsonQueryRoot` that sorts an array at `arrayPath` by `byPath`, writes the sorted result back to the same path immutably, and returns `JsonQueryRoot` for continued root-level chaining
 - **ObjectGroupQuery.flatArray(arrayPath)**: primary grouped-array flattening API returning a chainable `ArrayQuery` (for example, `.flatArray("items").where(...).all()`)
 - **ObjectGroupQuery.arrays(arrayPath)**: alias of `flatArray(arrayPath)` for compatibility
@@ -24,6 +27,8 @@
 - **ObjectGroupQuery.whereIn(path, values)** / **whereNotIn(path, values)** / **whereAll(criteria)** / **whereAny(criteria)** / **whereNone(criteria)**: group-level criteria filtering APIs with parity to array-level shorthand semantics
 - **ObjectGroupQuery.filter(expression, options?)** and **filterIfDefined(expression, param, options?)**: expression-based group filtering over selected group values
 - **ObjectGroupQuery.filterIfAllDefined(expression, params, options?)**: expression-based group filtering over selected group values, gated until all provided params are defined
+- **ObjectGroupQuery.whereSift(siftQuery)**: raw sift-clause filtering over selected group values
+- **ObjectGroupQuery.whereIfDefined(path, value, options?)** / **whereNotIfDefined(path, value, options?)**: conditional group-level equality filters that no-op for `null`/`undefined` values
 - **ObjectGroupQuery.whereMissing(path)** / **whereExists(path)**: group-level existence filters for missing/present paths (supports `string[]` to require all paths)
 - **ObjectGroupQuery.whereSelf()**: group-level where-builder entry point for comparing each selected group value directly
 - **ObjectGroupQuery.sort(path?, options?)**: group-level sorting by nested value (or by group value itself when path is omitted/empty), with `options: { direction?: "asc" | "desc"; nulls?: "last" | "first" }`, affecting `entries()`/`values()` order
@@ -77,6 +82,10 @@
 - `ArrayQuery.expand(path)`
 - `ArrayQuery.expand(path, options?)`
 - `ArrayQuery.set(path, value, options?)`
+- `ArrayQuery.setAt(path, value, options?)`
+- `ArrayQuery.unset(path, options?)`
+- `ArrayQuery.unsetAll(paths, options?)`
+- `ArrayQuery.deepClone()`
 - `ArrayQuery.setAll([{ path, value }, ...], options?)`
 - `ArrayQuery.setEach(path, value)`
 - `ArrayQuery.setOne(path, value, options?)`
@@ -84,6 +93,8 @@
 - `JsonQueryRoot.replaceValue(fromValue, toValue, options?)`
 - `JsonQueryRoot.replaceValueAt(path, fromValue, toValue, options?)`
 - `JsonQueryRoot.replaceManyAt(path, rules, options?)`
+- `JsonQueryRoot.setAt(path, value, options?)`
+- `JsonQueryRoot.deepClone()`
 - `ObjectGroupQuery.replaceValue(fromValue, toValue, options?)`
 - `ArrayQuery.diff(expected, options?)`
 - `ArrayQuery.hasAll(criteria, options?)`
@@ -97,6 +108,10 @@
 - `JsonQueryRoot.hasAll(criteria, options?)`
 - `JsonQueryRoot.has(key, value, options?)`
 - `ObjectGroupQuery.set(path, value, options?)`
+- `ObjectGroupQuery.setAt(path, value, options?)`
+- `ObjectGroupQuery.unset(path, options?)`
+- `ObjectGroupQuery.unsetAll(paths, options?)`
+- `ObjectGroupQuery.deepClone()`
 - `ObjectGroupQuery.setAll([{ path, value }, ...], options?)`
 - `ObjectGroupQuery.setEach(path, value)`
 - `ObjectGroupQuery.setOne(path, value, options?)`
@@ -113,6 +128,9 @@
 - `ObjectGroupQuery.filter(expression, options?)`
 - `ObjectGroupQuery.filterIfDefined(expression, param, options?)`
 - `ObjectGroupQuery.filterIfAllDefined(expression, params, options?)`
+- `ObjectGroupQuery.whereSift(siftQuery)`
+- `ObjectGroupQuery.whereIfDefined(path, value, options?)`
+- `ObjectGroupQuery.whereNotIfDefined(path, value, options?)`
 - `ObjectGroupQuery.whereSelf()`
 - `ObjectGroupQuery.whereMissing(path)`
 - `ObjectGroupQuery.whereExists(path)`
