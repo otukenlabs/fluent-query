@@ -62,6 +62,10 @@ export function _setJsonQueryRootFactory(
   createJsonQueryRoot = factory;
 }
 
+type UnboundTerminalReplay<TResult, TItem> = ArrayQuery<TItem, "unbound"> & {
+  readonly __terminalReplayResult: TResult;
+};
+
 /**
  * Fluent query wrapper around an array, parameterized by execution mode.
  *
@@ -919,6 +923,9 @@ export class ArrayQuery<
    */
   whereMissing(path: string | string[]): ArrayQuery<TItem, TMode> {
     if (Array.isArray(path)) {
+      if (path.length === 0) {
+        throw new Error("whereMissing() requires at least one path.");
+      }
       return this._pushClause({
         $and: path.map((p) => ({ [p]: { $exists: false } })),
       });
@@ -932,6 +939,9 @@ export class ArrayQuery<
    */
   whereExists(path: string | string[]): ArrayQuery<TItem, TMode> {
     if (Array.isArray(path)) {
+      if (path.length === 0) {
+        throw new Error("whereExists() requires at least one path.");
+      }
       return this._pushClause({
         $and: path.map((p) => ({ [p]: { $exists: true } })),
       });
@@ -943,6 +953,9 @@ export class ArrayQuery<
    * Filters items where all provided field-value pairs match exactly.
    */
   whereAll(criteria: Record<string, Primitive>): ArrayQuery<TItem, TMode> {
+    if (Object.keys(criteria).length === 0) {
+      throw new Error("whereAll() requires at least one criterion.");
+    }
     return this._pushClause(criteria);
   }
 
@@ -1014,7 +1027,7 @@ export class ArrayQuery<
    */
   all(): TMode extends "bound"
     ? QueryResult<TItem>
-    : ArrayQuery<TItem, "unbound"> {
+    : UnboundTerminalReplay<QueryResult<TItem>, TItem> {
     if (this.items === undefined) {
       return this._appendStep("all") as any;
     }
@@ -1030,7 +1043,9 @@ export class ArrayQuery<
   /**
    * Returns a fully detached deep clone of all matches.
    */
-  deepClone(): TMode extends "bound" ? TItem[] : ArrayQuery<TItem, "unbound"> {
+  deepClone(): TMode extends "bound"
+    ? TItem[]
+    : UnboundTerminalReplay<TItem[], TItem> {
     if (this.items === undefined) {
       return this._appendStep("deepClone") as any;
     }
@@ -1040,7 +1055,9 @@ export class ArrayQuery<
   /**
    * Returns the count of matching items.
    */
-  count(): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+  count(): TMode extends "bound"
+    ? number
+    : UnboundTerminalReplay<number, TItem> {
     if (this.items === undefined) {
       return this._appendStep("count") as any;
     }
@@ -1053,7 +1070,9 @@ export class ArrayQuery<
   diff(
     expected: unknown,
     options?: DiffOptions,
-  ): TMode extends "bound" ? DiffResult : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound"
+    ? DiffResult
+    : UnboundTerminalReplay<DiffResult, TItem> {
     if (this.items === undefined) {
       return this._appendStep("diff", expected, options) as any;
     }
@@ -1110,7 +1129,7 @@ export class ArrayQuery<
   hasAll(
     criteria: Record<string, unknown>,
     options?: HasAllOptions,
-  ): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? boolean : UnboundTerminalReplay<boolean, TItem> {
     if (this.items === undefined) {
       return this._appendStep("hasAll", criteria, options) as any;
     }
@@ -1127,14 +1146,16 @@ export class ArrayQuery<
     key: string,
     value: unknown,
     options?: HasAllOptions,
-  ): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? boolean : UnboundTerminalReplay<boolean, TItem> {
     return this.hasAll({ [key]: value }, options) as any;
   }
 
   /**
    * Returns true if at least one item matches.
    */
-  exists(): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+  exists(): TMode extends "bound"
+    ? boolean
+    : UnboundTerminalReplay<boolean, TItem> {
     if (this.items === undefined) {
       return this._appendStep("exists") as any;
     }
@@ -1145,12 +1166,20 @@ export class ArrayQuery<
   /**
    * Returns true if all items match the filters.
    */
-  every(): TMode extends "bound" ? boolean : ArrayQuery<TItem, "unbound"> {
+  every(): TMode extends "bound"
+    ? boolean
+    : UnboundTerminalReplay<boolean, TItem> {
     if (this.items === undefined) {
       return this._appendStep("every") as any;
     }
     this._assertBooleanTerminalHasSelectionContext("every");
-    return (this._executeFilter().length === this.items!.length) as any;
+    const filtered = this._executeFilter();
+    if (filtered.length === 0) {
+      throw new Error(
+        "every() requires at least one selected item. Add exists() before every(), or narrow less aggressively.",
+      );
+    }
+    return (filtered.length === this.items!.length) as any;
   }
 
   /**
@@ -1167,7 +1196,7 @@ export class ArrayQuery<
       finalRoundSignificantDigits?: number;
       finalRoundMode?: "halfUp" | "halfEven";
     },
-  ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? number : UnboundTerminalReplay<number, TItem> {
     if (this.items === undefined) {
       return this._appendStep("sum", path, options) as any;
     }
@@ -1349,7 +1378,7 @@ export class ArrayQuery<
       finalRoundSignificantDigits?: number;
       finalRoundMode?: "halfUp" | "halfEven";
     },
-  ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? number : UnboundTerminalReplay<number, TItem> {
     if (this.items === undefined) {
       return this._appendStep("average", path, options) as any;
     }
@@ -1525,7 +1554,9 @@ export class ArrayQuery<
    */
   min(
     path: string = "",
-  ): TMode extends "bound" ? number | null : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound"
+    ? number | null
+    : UnboundTerminalReplay<number | null, TItem> {
     if (this.items === undefined) {
       return this._appendStep("min", path) as any;
     }
@@ -1545,7 +1576,9 @@ export class ArrayQuery<
    */
   max(
     path: string = "",
-  ): TMode extends "bound" ? number | null : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound"
+    ? number | null
+    : UnboundTerminalReplay<number | null, TItem> {
     if (this.items === undefined) {
       return this._appendStep("max", path) as any;
     }
@@ -1565,7 +1598,7 @@ export class ArrayQuery<
    */
   sumOfProducts(
     ...paths: string[]
-  ): TMode extends "bound" ? number : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? number : UnboundTerminalReplay<number, TItem> {
     if (this.items === undefined) {
       return this._appendStep("sumOfProducts", ...paths) as any;
     }
@@ -1605,7 +1638,7 @@ export class ArrayQuery<
     path: string,
   ): TMode extends "bound"
     ? Record<string, TItem[]>
-    : ArrayQuery<TItem, "unbound"> {
+    : UnboundTerminalReplay<Record<string, TItem[]>, TItem> {
     if (this.items === undefined) {
       return this._appendStep("groupBy", path) as any;
     }
@@ -1932,7 +1965,7 @@ export class ArrayQuery<
   /**
    * Returns the first match. Throws if no matches.
    */
-  first(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+  first(): TMode extends "bound" ? TItem : UnboundTerminalReplay<TItem, TItem> {
     if (this.items === undefined) {
       return this._appendStep("first") as any;
     }
@@ -1946,14 +1979,16 @@ export class ArrayQuery<
   /**
    * Alias for first().
    */
-  any(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+  any(): TMode extends "bound" ? TItem : UnboundTerminalReplay<TItem, TItem> {
     return this.first();
   }
 
   /**
    * Returns a random match. Throws if no matches.
    */
-  random(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+  random(): TMode extends "bound"
+    ? TItem
+    : UnboundTerminalReplay<TItem, TItem> {
     if (this.items === undefined) {
       return this._appendStep("random") as any;
     }
@@ -2019,7 +2054,7 @@ export class ArrayQuery<
   /**
    * Returns the last match. Throws if no matches.
    */
-  last(): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+  last(): TMode extends "bound" ? TItem : UnboundTerminalReplay<TItem, TItem> {
     if (this.items === undefined) {
       return this._appendStep("last") as any;
     }
@@ -2035,7 +2070,7 @@ export class ArrayQuery<
    */
   nth(
     index: number,
-  ): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TItem : UnboundTerminalReplay<TItem, TItem> {
     if (this.items === undefined) {
       return this._appendStep("nth", index) as any;
     }
@@ -2105,7 +2140,7 @@ export class ArrayQuery<
    */
   one(
     message?: string,
-  ): TMode extends "bound" ? TItem : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TItem : UnboundTerminalReplay<TItem, TItem> {
     if (this.items === undefined) {
       return this._appendStep("one", message) as any;
     }
@@ -2206,7 +2241,7 @@ export class ArrayQuery<
   reduce<TAcc>(
     fn: (acc: TAcc, item: TItem) => TAcc,
     init: TAcc,
-  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TAcc : UnboundTerminalReplay<TAcc, TItem> {
     if (this.items === undefined) {
       return this._appendStep("reduce", fn, init) as any;
     }
@@ -2224,7 +2259,7 @@ export class ArrayQuery<
     path2: string,
     fn: (acc: TAcc, a: any, b: any) => TAcc,
     init: TAcc,
-  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TAcc : UnboundTerminalReplay<TAcc, TItem> {
     if (this.items === undefined) {
       return this._appendStep("reduce2", path1, path2, fn, init) as any;
     }
@@ -2246,7 +2281,7 @@ export class ArrayQuery<
     paths: string[],
     fn: (acc: TAcc, ...values: any[]) => TAcc,
     init: TAcc,
-  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TAcc : UnboundTerminalReplay<TAcc, TItem> {
     if (this.items === undefined) {
       return this._appendStep("reducen", paths, fn, init) as any;
     }
@@ -2262,7 +2297,7 @@ export class ArrayQuery<
   fold<TAcc>(
     fn: (acc: TAcc, item: TItem) => TAcc,
     init: TAcc,
-  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TAcc : UnboundTerminalReplay<TAcc, TItem> {
     return this.reduce(fn, init);
   }
 
@@ -2272,7 +2307,7 @@ export class ArrayQuery<
     path2: string,
     fn: (acc: TAcc, a: any, b: any) => TAcc,
     init: TAcc,
-  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TAcc : UnboundTerminalReplay<TAcc, TItem> {
     return this.reduce2(path1, path2, fn, init);
   }
 
@@ -2281,7 +2316,7 @@ export class ArrayQuery<
     paths: string[],
     fn: (acc: TAcc, ...values: any[]) => TAcc,
     init: TAcc,
-  ): TMode extends "bound" ? TAcc : ArrayQuery<TItem, "unbound"> {
+  ): TMode extends "bound" ? TAcc : UnboundTerminalReplay<TAcc, TItem> {
     return this.reducen(paths, fn, init);
   }
 
@@ -2733,7 +2768,9 @@ export class ArrayQuery<
    *
    * On bound (query): supply a recipe (unbound ArrayQuery) to apply.
    */
-  run(input: any): ArrayQuery<any, "bound"> {
+  run<TResult>(this: UnboundTerminalReplay<TResult, any>, input: any): TResult;
+  run(input: any): ArrayQuery<any, "bound">;
+  run(input: any): any {
     if (this.items === undefined) {
       // Unbound: input is data
       let items: any[];

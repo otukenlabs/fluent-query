@@ -1250,6 +1250,21 @@ describe("conditional terminals in unbound mode", () => {
     expect(result).toBe(true);
   });
 
+  it(".every() in unbound records a step", () => {
+    const pipe = arrayPipeline<Item>().where("id").gt(0).every();
+
+    const result = (pipe as any).run(datasetA);
+    expect(result).toBe(true);
+  });
+
+  it(".every() in unbound throws for empty narrowed selection", () => {
+    const pipe = arrayPipeline<Item>().where("id").equals(999).every();
+
+    expect(() => (pipe as any).run(datasetA)).toThrow(
+      "every() requires at least one selected item. Add exists() before every(), or narrow less aggressively.",
+    );
+  });
+
   it(".diff() in unbound records a step", () => {
     const pipe = arrayPipeline<Item>()
       .where("type")

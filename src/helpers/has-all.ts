@@ -122,6 +122,10 @@ export function hasAllInAny(
   criteria: Record<string, unknown>,
   options?: HasAllOptions,
 ): boolean {
+  if (Object.keys(criteria).length === 0) {
+    throw new Error("hasAll() requires at least one criterion.");
+  }
+
   const scope = options?.scope ?? "top-level";
 
   for (const value of values) {

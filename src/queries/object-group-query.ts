@@ -441,6 +441,9 @@ export class ObjectGroupQuery {
   /** Filters selected group values where key(s) at path do not exist. */
   whereMissing(path: string | string[]): ObjectGroupQuery {
     if (Array.isArray(path)) {
+      if (path.length === 0) {
+        throw new Error("whereMissing() requires at least one path.");
+      }
       return this._applyWhereClause({
         $and: path.map((p) => ({ [p]: { $exists: false } })),
       });
@@ -451,6 +454,9 @@ export class ObjectGroupQuery {
   /** Filters selected group values where key(s) at path exist. */
   whereExists(path: string | string[]): ObjectGroupQuery {
     if (Array.isArray(path)) {
+      if (path.length === 0) {
+        throw new Error("whereExists() requires at least one path.");
+      }
       return this._applyWhereClause({
         $and: path.map((p) => ({ [p]: { $exists: true } })),
       });
@@ -460,6 +466,9 @@ export class ObjectGroupQuery {
 
   /** Filters selected group values where all provided field-value pairs match exactly. */
   whereAll(criteria: Record<string, Primitive>): ObjectGroupQuery {
+    if (Object.keys(criteria).length === 0) {
+      throw new Error("whereAll() requires at least one criterion.");
+    }
     return this._applyWhereClause(criteria);
   }
 

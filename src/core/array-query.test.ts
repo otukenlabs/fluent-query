@@ -206,6 +206,18 @@ describe("ArrayQuery", () => {
         .all();
       expect(result.map((item) => item.id)).toEqual([1]);
     });
+
+    it("should throw when an empty array is passed to whereMissing", () => {
+      expect(() => query(data).array("items").whereMissing([])).toThrow(
+        "whereMissing() requires at least one path.",
+      );
+    });
+
+    it("should throw when an empty array is passed to whereExists", () => {
+      expect(() => query(data).array("items").whereExists([])).toThrow(
+        "whereExists() requires at least one path.",
+      );
+    });
   });
 
   describe(".exists() and .every() direct selection guards", () => {
@@ -224,6 +236,14 @@ describe("ArrayQuery", () => {
       ).toBe(true);
       expect(query(testData).array("items").where("id").gt(0).every()).toBe(
         true,
+      );
+    });
+
+    it("should throw when every() is called on an empty narrowed selection", () => {
+      expect(() =>
+        query(testData).array("items").where("id").equals(999).every(),
+      ).toThrow(
+        "every() requires at least one selected item. Add exists() before every(), or narrow less aggressively.",
       );
     });
 
@@ -282,6 +302,22 @@ describe("ArrayQuery", () => {
     it("should throw for empty criteria", () => {
       expect(() => query(testData).array("items").whereNone({})).toThrow(
         "whereNone() requires at least one criterion.",
+      );
+    });
+  });
+
+  describe(".whereAll()", () => {
+    it("should filter items where all field-value pairs match", () => {
+      const result = query(testData)
+        .array("items")
+        .whereAll({ type: "Premium" })
+        .all();
+      expect(result.map((item) => item.id)).toEqual([1, 3]);
+    });
+
+    it("should throw for empty criteria", () => {
+      expect(() => query(testData).array("items").whereAll({})).toThrow(
+        "whereAll() requires at least one criterion.",
       );
     });
   });
@@ -2542,6 +2578,15 @@ describe("ArrayQuery", () => {
         .hasAll({ type: "Premium", status: "active" }, { scope: "deep" });
 
       expect(result).toBe(true);
+    });
+
+    it("should throw for empty criteria", () => {
+      const source = {
+        items: [{ id: 1, type: "Premium" }],
+      };
+      expect(() => query(source).array("items").hasAll({})).toThrow(
+        "hasAll() requires at least one criterion.",
+      );
     });
   });
 
