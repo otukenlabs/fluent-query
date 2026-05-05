@@ -26,14 +26,16 @@ export function makeRegex(
 ): RegExp {
   const raw = opts.trim ? value.trim() : value;
   const escaped = escapeRegex(raw);
+  const leadingBoundary = opts.trim ? "\\s*" : "";
+  const trailingBoundary = opts.trim ? "\\s*" : "";
 
   const pattern =
     mode === "exact"
-      ? `^${escaped}$`
+      ? `^${leadingBoundary}${escaped}${trailingBoundary}$`
       : mode === "startsWith"
-        ? `^${escaped}`
+        ? `^${leadingBoundary}${escaped}`
         : mode === "endsWith"
-          ? `${escaped}$`
+          ? `${escaped}${trailingBoundary}$`
           : escaped; // contains
 
   const flags = opts.caseInsensitive ? "i" : "";

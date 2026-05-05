@@ -6,27 +6,33 @@
 /**
  * Safely retrieves a nested value from an object using dot-path notation.
  * Supports array indices via bracket notation (e.g., "elements[2]").
- * Throws an error if the path doesn't exist or resolves to undefined.
+ * Preserves explicit `undefined` at the final leaf when the property exists,
+ * unless `strict` is enabled, in which case a resolved `undefined` value throws.
  *
  * @example
  * ```ts
  * const value = getByPath({ a: { b: { c: 1 } } }, 'a.b.c'); // 1
  * const arrayItem = getByPath({ items: [1, 2, 3] }, 'items[1]'); // 2
+ * getByPath({ a: { b: undefined } }, 'a.b'); // undefined
+ * getByPath({ a: { b: undefined } }, 'a.b', true); // throws error
  * getByPath({ a: {} }, 'a.b.c'); // throws error
  * ```
  *
  * @param obj - The object to read from.
  * @param path - Dot-separated path with optional bracket indices (e.g., `"customer.relationship.description"` or `"items[0].name"`).
+ * @param strict - When `true`, throws if the resolved value is `undefined`.
  * @returns The value at that path.
- * @throws Error if the path doesn't exist or resolves to undefined.
+ * @throws Error if the path doesn't exist or is non-traversable.
  */
-export function getByPath(obj: unknown, path: string): any {
+export function getByPath(obj: unknown, path: string, strict = false): any {
   if (!path) return obj;
 
   const segments = path.split(".");
   let current = obj;
 
-  for (const segment of segments) {
+  for (let i = 0; i < segments.length; i += 1) {
+    const segment = segments[i];
+
     if (current == null) {
       throw new Error(
         `Path "${path}" does not exist: null/undefined at "${segment}".`,
@@ -36,36 +42,47 @@ export function getByPath(obj: unknown, path: string): any {
     // Check for array bracket notation: "items[0]" → ["items", "0"]
     const bracketMatch = segment.match(/^(.+?)\[(\d+)\]$/);
     if (bracketMatch) {
-      const [, key, index] = bracketMatch;
-      current = (current as any)[key];
-      if (current == null) {
+      const [, key, indexStr] = bracketMatch;
+      const collection = (current as any)[key];
+      if (collection == null) {
         throw new Error(
           `Path "${path}" does not exist: null/undefined at "${key}".`,
         );
       }
-      if (!Array.isArray(current)) {
+      if (!Array.isArray(collection)) {
         throw new Error(
           `Path "${path}" does not exist: "${key}" is not an array.`,
         );
       }
-      current = current[parseInt(index, 10)];
-      if (current === undefined) {
-        throw new Error(
-          `Path "${path}" does not exist: index ${index} out of bounds.`,
-        );
-      }
-    } else {
-      current = (current as any)[segment];
-      if (current === undefined) {
-        throw new Error(
-          `Path "${path}" does not exist: property "${segment}" not found.`,
-        );
-      }
-    }
-  }
 
-  if (current === undefined) {
-    throw new Error(`Path "${path}" resolved to undefined.`);
+      const index = parseInt(indexStr, 10);
+      if (index < 0 || index >= collection.length) {
+        throw new Error(
+          `Path "${path}" does not exist: index ${indexStr} out of bounds.`,
+        );
+      }
+
+      current = collection[index];
+      if (strict && current === undefined) {
+        throw new Error(
+          `Path "${path}" does not exist: index ${indexStr} resolved to undefined.`,
+        );
+      }
+      continue;
+    }
+
+    if (!Object.hasOwn(current as object, segment)) {
+      throw new Error(
+        `Path "${path}" does not exist: property "${segment}" not found.`,
+      );
+    }
+
+    current = (current as any)[segment];
+    if (strict && current === undefined) {
+      throw new Error(
+        `Path "${path}" does not exist: property "${segment}" not found.`,
+      );
+    }
   }
 
   return current;
