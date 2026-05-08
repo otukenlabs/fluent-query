@@ -101,6 +101,12 @@ export type HasAllOptions = {
   scope?: "top-level" | "deep";
 };
 
+export type ExistsOptions = {
+  minCount?: number;
+  maxCount?: number;
+  exactly?: number;
+};
+
 export type FindOptions = {
   scope?: "top-level" | "deep";
 };

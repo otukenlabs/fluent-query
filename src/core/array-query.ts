@@ -41,6 +41,7 @@ import type {
   ArrayQueryMetadata,
   DiffOptions,
   DiffResult,
+  ExistsOptions,
   FindOptions,
   HasAllOptions,
   Primitive,
@@ -1153,14 +1154,79 @@ export class ArrayQuery<
   /**
    * Returns true if at least one item matches.
    */
-  exists(): TMode extends "bound"
-    ? boolean
-    : UnboundTerminalReplay<boolean, TItem> {
+  exists(
+    options?: ExistsOptions,
+  ): TMode extends "bound" ? boolean : UnboundTerminalReplay<boolean, TItem> {
+    const normalized = ArrayQuery._normalizeExistsOptions(options);
+
     if (this.items === undefined) {
-      return this._appendStep("exists") as any;
+      return this._appendStep("exists", options) as any;
     }
     this._assertBooleanTerminalHasSelectionContext("exists");
-    return (this._executeFilter().length > 0) as any;
+    const count = this._executeFilter().length;
+
+    if (normalized.exactly !== undefined) {
+      return (count === normalized.exactly) as any;
+    }
+
+    const minCount = normalized.minCount;
+    const maxCount = normalized.maxCount;
+
+    if (minCount !== undefined && count < minCount) {
+      return false as any;
+    }
+    if (maxCount !== undefined && count > maxCount) {
+      return false as any;
+    }
+
+    return (count > 0) as any;
+  }
+
+  private static _normalizeExistsOptions(
+    options?: ExistsOptions,
+  ): Pick<ExistsOptions, "minCount" | "maxCount" | "exactly"> {
+    const normalized = {
+      minCount: options?.minCount,
+      maxCount: options?.maxCount,
+      exactly: options?.exactly,
+    };
+
+    const validateInteger = (
+      value: number | undefined,
+      name: "minCount" | "maxCount" | "exactly",
+    ): void => {
+      if (value === undefined) {
+        return;
+      }
+      if (!Number.isInteger(value) || value < 0) {
+        throw new Error(`exists() options.${name} must be an integer >= 0.`);
+      }
+    };
+
+    validateInteger(normalized.minCount, "minCount");
+    validateInteger(normalized.maxCount, "maxCount");
+    validateInteger(normalized.exactly, "exactly");
+
+    if (
+      normalized.exactly !== undefined &&
+      (normalized.minCount !== undefined || normalized.maxCount !== undefined)
+    ) {
+      throw new Error(
+        "exists() options.exactly cannot be combined with minCount or maxCount.",
+      );
+    }
+
+    if (
+      normalized.minCount !== undefined &&
+      normalized.maxCount !== undefined &&
+      normalized.minCount > normalized.maxCount
+    ) {
+      throw new Error(
+        "exists() options.minCount cannot be greater than options.maxCount.",
+      );
+    }
+
+    return normalized;
   }
 
   /**

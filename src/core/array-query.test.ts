@@ -234,8 +234,96 @@ describe("ArrayQuery", () => {
       expect(
         query(testData).array("items").where("id").equals(1).exists(),
       ).toBe(true);
+      expect(
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ minCount: 2 }),
+      ).toBe(true);
+      expect(
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ minCount: 3 }),
+      ).toBe(false);
+      expect(
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ maxCount: 2 }),
+      ).toBe(true);
+      expect(
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ maxCount: 1 }),
+      ).toBe(false);
+      expect(
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ exactly: 2 }),
+      ).toBe(true);
+      expect(
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ exactly: 1 }),
+      ).toBe(false);
       expect(query(testData).array("items").where("id").gt(0).every()).toBe(
         true,
+      );
+    });
+
+    it("should validate exists() options", () => {
+      expect(() =>
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ minCount: -1 }),
+      ).toThrow("exists() options.minCount must be an integer >= 0.");
+
+      expect(() =>
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ maxCount: 1.5 }),
+      ).toThrow("exists() options.maxCount must be an integer >= 0.");
+
+      expect(() =>
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ exactly: -2 }),
+      ).toThrow("exists() options.exactly must be an integer >= 0.");
+
+      expect(() =>
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ minCount: 3, maxCount: 2 }),
+      ).toThrow(
+        "exists() options.minCount cannot be greater than options.maxCount.",
+      );
+
+      expect(() =>
+        query(testData)
+          .array("items")
+          .where("type")
+          .equals("Premium")
+          .exists({ exactly: 2, minCount: 1 }),
+      ).toThrow(
+        "exists() options.exactly cannot be combined with minCount or maxCount.",
       );
     });
 

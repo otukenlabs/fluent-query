@@ -1250,6 +1250,42 @@ describe("conditional terminals in unbound mode", () => {
     expect(result).toBe(true);
   });
 
+  it(".exists(options) in unbound records a step", () => {
+    const atLeastTwo = arrayPipeline<Item>()
+      .where("type")
+      .equals("Premium")
+      .exists({ minCount: 2 });
+
+    const exactlyThree = arrayPipeline<Item>()
+      .where("type")
+      .equals("Premium")
+      .exists({ exactly: 3 });
+
+    const resultAtLeastTwo = (atLeastTwo as any).run(datasetA);
+    const resultExactlyThree = (exactlyThree as any).run(datasetA);
+
+    expect(resultAtLeastTwo).toBe(true);
+    expect(resultExactlyThree).toBe(true);
+  });
+
+  it(".exists(options) in unbound validates options", () => {
+    expect(() =>
+      arrayPipeline<Item>()
+        .where("type")
+        .equals("Premium")
+        .exists({ minCount: -1 }),
+    ).toThrow("exists() options.minCount must be an integer >= 0.");
+
+    expect(() =>
+      arrayPipeline<Item>()
+        .where("type")
+        .equals("Premium")
+        .exists({ exactly: 1, maxCount: 2 }),
+    ).toThrow(
+      "exists() options.exactly cannot be combined with minCount or maxCount.",
+    );
+  });
+
   it(".every() in unbound records a step", () => {
     const pipe = arrayPipeline<Item>().where("id").gt(0).every();
 

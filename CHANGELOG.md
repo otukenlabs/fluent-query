@@ -170,6 +170,7 @@
 ### Changed
 
 - **Unified ArrayQuery internals**: pipeline implementation is consolidated into a single `ArrayQuery<TItem, TMode>` model parameterized by a phantom type (`'bound'` or `'unbound'`). Since only `1.0.0` was published, this reflects pre-release refactoring and does not remove any npm-published public classes.
+- **`exists(options?)` count constraints**: `ArrayQuery.exists()` now accepts optional count bounds via `{ minCount?: number; maxCount?: number; exactly?: number }`. When omitted, behavior remains the same (`count > 0`). `exactly` cannot be combined with `minCount`/`maxCount`; all provided values must be integers `>= 0`; and `minCount` cannot exceed `maxCount`.
 - **Sort self-value support**: `ArrayQuery.sort(path?, options?)` and `ObjectGroupQuery.sort(path?, options?)` now treat omitted/empty path as "sort by the current item/value itself" and support nullish placement via `options.nulls`.
 - **Sort numeric-string coercion option**: `ArrayQuery.sort(path?, options?)` now supports `options.coerceNumericStrings` (default `true`) so numeric-string values (for example `"10"`, `"2"`) can sort numerically by default, with opt-out for lexical ordering.
 - **Aggregate self-value support**: `ArrayQuery.sum(path?, options?)`, `average(path?, options?)`, `min(path?)`, and `max(path?)` now support omitted/empty path for primitive arrays. Decimal rounding via `options.decimals` is supported on `sum` and `average`.
