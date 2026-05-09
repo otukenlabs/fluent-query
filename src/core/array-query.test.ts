@@ -4921,6 +4921,27 @@ describe("ArrayQuery", () => {
       expect(result.map((x) => x.id)).toEqual([1]);
     });
 
+    it("should support gteIfDefined/lteIfDefined aliases", () => {
+      const result = query(testData)
+        .array("items")
+        .gteIfDefined("price", 100)
+        .lessThanIfDefined("price", 150)
+        .lteIfDefined("price", 100)
+        .all();
+
+      expect(result.map((x) => x.id)).toEqual([1]);
+    });
+
+    it("should support gtIfDefined/ltIfDefined aliases", () => {
+      const result = query(testData)
+        .array("items")
+        .gtIfDefined("price", 90)
+        .ltIfDefined("price", 120)
+        .all();
+
+      expect(result.map((x) => x.id)).toEqual([1]);
+    });
+
     it("should cover negated conditional string helpers", () => {
       const result = query(testData)
         .array("items")

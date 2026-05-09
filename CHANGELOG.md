@@ -147,9 +147,13 @@
   - `whereIfDefined(path, value, options?)`
   - `whereNotIfDefined(path, value, options?)`
   - `greaterThanIfDefined(path, value)`
+  - `gtIfDefined(path, value)`
   - `greaterThanOrEqualIfDefined(path, value)`
+  - `gteIfDefined(path, value)`
   - `lessThanIfDefined(path, value)`
+  - `ltIfDefined(path, value)`
   - `lessThanOrEqualIfDefined(path, value)`
+  - `lteIfDefined(path, value)`
   - `containsIfDefined(path, value, options?)`
   - `notContainsIfDefined(path, value, options?)`
   - `startsWithIfDefined(path, value, options?)`

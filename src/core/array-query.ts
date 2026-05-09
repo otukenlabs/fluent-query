@@ -611,6 +611,14 @@ export class ArrayQuery<
     return this;
   }
 
+  /** Alias of `greaterThanIfDefined(path, value)`. */
+  gtIfDefined(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    return this.greaterThanIfDefined(path, value);
+  }
+
   /**
    * Conditionally applies where().greaterThanOrEqual() if value is defined.
    */
@@ -622,6 +630,14 @@ export class ArrayQuery<
       return this.where(path).greaterThanOrEqual(value);
     }
     return this;
+  }
+
+  /** Alias of `greaterThanOrEqualIfDefined(path, value)`. */
+  gteIfDefined(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    return this.greaterThanOrEqualIfDefined(path, value);
   }
 
   /**
@@ -637,6 +653,14 @@ export class ArrayQuery<
     return this;
   }
 
+  /** Alias of `lessThanIfDefined(path, value)`. */
+  ltIfDefined(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    return this.lessThanIfDefined(path, value);
+  }
+
   /**
    * Conditionally applies where().lessThanOrEqual() if value is defined.
    */
@@ -648,6 +672,14 @@ export class ArrayQuery<
       return this.where(path).lessThanOrEqual(value);
     }
     return this;
+  }
+
+  /** Alias of `lessThanOrEqualIfDefined(path, value)`. */
+  lteIfDefined(
+    path: string,
+    value: number | null | undefined,
+  ): ArrayQuery<TItem, TMode> {
+    return this.lessThanOrEqualIfDefined(path, value);
   }
 
   /**
