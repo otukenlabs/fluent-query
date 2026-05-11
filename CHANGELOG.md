@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.1] - 2026-05-11
+
+### Fixed
+
+- Fixed nested dot-path access in numeric coercion code paths for `where().equals()`, `whereIn()`, and `whereNotIn()` across `ArrayQuery` and `ObjectGroupQuery` (for example, `totalAmount.amount` now resolves correctly instead of using single-level lookup).
+
 ## [2.0.0] - 2026-02-28
 
 ### Added
