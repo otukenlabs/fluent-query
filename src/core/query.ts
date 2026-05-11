@@ -4,8 +4,8 @@
  */
 
 import { getByPath } from "../helpers/path";
-import { ArrayQuery } from "./array-query";
 import { ObjectGroupQuery } from "../queries/object-group-query";
+import { ArrayQuery } from "./array-query";
 
 /**
  * Entry point for fluent JSON querying.
@@ -79,14 +79,14 @@ export class JsonQueryRoot<TRoot> {
    * @param path - Dot-path to the array.
    * @returns An {@link ArrayQuery} that can be filtered fluently.
    */
-  array<TItem = any>(path: string): ArrayQuery<TItem> {
+  array<TItem = any>(path: string): ArrayQuery<TItem, "bound"> {
     const v = getByPath(this.root as any, path);
     if (!Array.isArray(v)) {
       throw new Error(
         `Expected array at path "${path}", but found ${typeof v}.`,
       );
     }
-    return new ArrayQuery<TItem>(v as TItem[], {
+    return ArrayQuery._bound<TItem>(v as TItem[], {
       arrayPath: path,
     });
   }
@@ -174,7 +174,34 @@ export class JsonQueryRoot<TRoot> {
    *
    * @note The returned query does not support `.path()` since root arrays don't have a named path.
    */
-  arrayRoot<TItem = any>(): Omit<ArrayQuery<TItem>, "path"> {
+  arrayRoot<TItem = any>(): Omit<ArrayQuery<TItem, "bound">, "path"> {
     return this.array<TItem>("");
+  }
+
+  /**
+   * Applies a recipe (unbound ArrayQuery with embedded path) to this data.
+   * The recipe must have an embedded arrayPath (created from a bound chain's
+   * .toRecipe() or from arrayPipeline() usage with path).
+   *
+   * @throws Error if the recipe has no embedded path.
+   */
+  run<TItem>(recipe: ArrayQuery<TItem, "unbound">): ArrayQuery<TItem, "bound"> {
+    const path = recipe._getArrayPath();
+    if (path === undefined) {
+      throw new Error(
+        "Cannot run a pure pipeline on JsonQueryRoot. " +
+          "Use recipe.run(items) or query(data).array(path).run(recipe) instead.",
+      );
+    }
+    const items = getByPath(this.root as any, path) as TItem[];
+    if (!Array.isArray(items)) {
+      throw new Error(`Expected array at path "${path}", got ${typeof items}.`);
+    }
+    // Replay the recipe's steps onto the extracted items
+    const steps = recipe._getSteps();
+    // Create a bound query from the items and run the recipe's steps via
+    // a fresh unbound pipeline (without embedded path) to avoid double extraction.
+    const purePipeline = ArrayQuery._fromSteps<TItem>([...steps]);
+    return purePipeline.run(items);
   }
 }

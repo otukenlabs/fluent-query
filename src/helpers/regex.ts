@@ -3,7 +3,7 @@
  * @description Utilities for regex building and pattern escaping.
  */
 
-import { MatchMode, WhereOptions } from "../types";
+import type { MatchMode, WhereOptions } from "../types";
 
 /**
  * Escapes a string so it can be safely used inside a RegExp.

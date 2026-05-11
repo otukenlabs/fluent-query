@@ -24,7 +24,7 @@ export class AggregateQuery {
    * @returns this for chaining
    */
   sum(path: string): this {
-    this.aggregations["sum"] = this.items.reduce((total, item) => {
+    this.aggregations.sum = this.items.reduce((total, item) => {
       const value = getByPath(item, path);
       const num = typeof value === "number" ? value : 0;
       return total + num;
@@ -40,14 +40,14 @@ export class AggregateQuery {
    */
   average(path: string): this {
     if (this.items.length === 0) {
-      this.aggregations["average"] = 0;
+      this.aggregations.average = 0;
     } else {
       const sum = this.items.reduce((total, item) => {
         const value = getByPath(item, path);
         const num = typeof value === "number" ? value : 0;
         return total + num;
       }, 0);
-      this.aggregations["average"] = sum / this.items.length;
+      this.aggregations.average = sum / this.items.length;
     }
     return this;
   }
@@ -60,13 +60,15 @@ export class AggregateQuery {
    */
   min(path: string): this {
     if (this.items.length === 0) {
-      this.aggregations["min"] = null;
+      this.aggregations.min = null;
     } else {
       const values = this.items
         .map((item) => getByPath(item, path))
-        .filter((v) => v !== null && v !== undefined && !isNaN(Number(v)))
+        .filter(
+          (v) => v !== null && v !== undefined && !Number.isNaN(Number(v)),
+        )
         .map(Number);
-      this.aggregations["min"] = values.length > 0 ? Math.min(...values) : null;
+      this.aggregations.min = values.length > 0 ? Math.min(...values) : null;
     }
     return this;
   }
@@ -79,13 +81,15 @@ export class AggregateQuery {
    */
   max(path: string): this {
     if (this.items.length === 0) {
-      this.aggregations["max"] = null;
+      this.aggregations.max = null;
     } else {
       const values = this.items
         .map((item) => getByPath(item, path))
-        .filter((v) => v !== null && v !== undefined && !isNaN(Number(v)))
+        .filter(
+          (v) => v !== null && v !== undefined && !Number.isNaN(Number(v)),
+        )
         .map(Number);
-      this.aggregations["max"] = values.length > 0 ? Math.max(...values) : null;
+      this.aggregations.max = values.length > 0 ? Math.max(...values) : null;
     }
     return this;
   }
@@ -106,7 +110,7 @@ export class AggregateQuery {
       for (const path of paths) {
         const value = getByPath(item, path);
         const num = Number(value);
-        if (isNaN(num)) {
+        if (Number.isNaN(num)) {
           throw new Error(
             `Invalid number at path "${path}" for product calculation`,
           );
@@ -115,7 +119,7 @@ export class AggregateQuery {
       }
       return sum + prod;
     }, 0);
-    this.aggregations["sumOfProducts"] = productValue;
+    this.aggregations.sumOfProducts = productValue;
     return this;
   }
 
@@ -125,7 +129,7 @@ export class AggregateQuery {
    * @returns this for chaining
    */
   count(): this {
-    this.aggregations["count"] = this.items.length;
+    this.aggregations.count = this.items.length;
     return this;
   }
 

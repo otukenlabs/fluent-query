@@ -219,9 +219,9 @@ describe("ArrayQuery", () => {
     it("should group items by a field", () => {
       const result = query(testData).array("items").groupBy("type");
       expect(Object.keys(result)).toHaveLength(3);
-      expect(result["Premium"]).toHaveLength(2);
-      expect(result["Basic"]).toHaveLength(1);
-      expect(result["Standard"]).toHaveLength(1);
+      expect(result.Premium).toHaveLength(2);
+      expect(result.Basic).toHaveLength(1);
+      expect(result.Standard).toHaveLength(1);
     });
   });
 
@@ -363,7 +363,12 @@ describe("ArrayQuery", () => {
           },
           {} as Record<number, string>,
         );
-      expect(byId).toEqual({ 1: "Item A", 2: "Item B", 3: "Item C", 4: "Item D" });
+      expect(byId).toEqual({
+        1: "Item A",
+        2: "Item B",
+        3: "Item C",
+        4: "Item D",
+      });
     });
   });
 

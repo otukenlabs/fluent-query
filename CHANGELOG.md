@@ -1,5 +1,34 @@
 # Changelog
 
+## [2.1.0] - 2026-02-27
+
+### Changed
+
+- **Unified ArrayQuery**: `ArrayPipeline` and `PipelineWhereBuilder` are replaced by a single `ArrayQuery<TItem, TMode>` class parameterized by a phantom type (`'bound'` or `'unbound'`). The public API (`arrayPipeline()`, `.run()`, all chainable methods) is backward-compatible; only the internal type names changed.
+
+### Added
+
+- **`.toRecipe()`**: extract a reusable pipeline from any bound chain or `QueryResult`, with optional `stripTerminal` to swap the terminal at deploy time
+- **`QueryResult<T>`**: `.all()` now returns a `QueryResult` that extends `Array<T>` — passes `Array.isArray()`, supports indexing/spread/iteration, and exposes `.toRecipe()` for recipe extraction
+- **`query(data).run(recipe)`**: apply a recipe (with embedded path) directly to a root object
+- **`bound.run(transform)`**: apply a pure pipeline as a post-processing transform on bound query results
+- **Conditional terminals in unbound mode**: `.all()`, `.count()`, `.first()`, `.exists()` etc. record themselves as steps when called on an unbound pipeline, so the full chain can be replayed via `.run()`
+
+### Removed
+
+- `ArrayPipeline` class (replaced by `ArrayQuery<T, 'unbound'>`)
+- `PipelineWhereBuilder` class (replaced by `WhereBuilder<T, TMode>`)
+
+## [2.0.0] - 2026-02-26
+
+### Added
+
+- **Assignable lazy chains** via `arrayPipeline()`: reusable, data-independent query composition -- record operations once, replay on any array via `.run(items)`
+- `ArrayPipeline` supports all chainable methods (`where`, `whereNot`, `filter`, `sort`, `take`, `drop`, `whereIn`, `whereSift`, `whereAll`, and all `*IfPresent` variants)
+- `PipelineWhereBuilder` proxy mirrors `WhereBuilder` modifiers (`not`, `ignoreCase`, `caseSensitive`, `trim`, `noTrim`) and terminals (`equals`, `contains`, `startsWith`, `endsWith`, `greaterThan`, `lessThan`, etc.)
+- Type-changing transforms (`map`, `map2`, `mapn`, `flatMap`, `scan`, `zip`, `zipWith`) return a new `ArrayPipeline<TOut>`
+- Pipelines are immutable -- each chained call returns a new instance
+
 ## [1.1.0] - 2026-02-26
 
 ### Added

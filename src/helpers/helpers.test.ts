@@ -1,4 +1,4 @@
-import { query, getPathSegmentAfter } from "../index";
+import { getPathSegmentAfter, query } from "../index";
 
 describe("Helpers", () => {
   describe("getPathSegmentAfter()", () => {
@@ -26,7 +26,7 @@ describe("Helpers", () => {
   });
 
   describe("Nested path access", () => {
-    const data = {
+    const _data = {
       user: {
         profile: {
           name: "Alice",
