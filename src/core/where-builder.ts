@@ -4,6 +4,7 @@
  */
 
 import { buildNumericComparisonClause } from "../helpers/numeric-comparison";
+import { getByPath } from "../helpers/path";
 import { makeRegex } from "../helpers/regex";
 import type {
   NumericComparisonOptions,
@@ -173,7 +174,7 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
             fieldValue = this;
           } else {
             try {
-              fieldValue = this[path];
+              fieldValue = getByPath(this, path);
             } catch {
               return negate; // If error accessing field, negate determines falsy/truthy
             }
