@@ -3,9 +3,43 @@
  * @description Main query entry point and JsonQueryRoot class.
  */
 
+import { type CompactOptions, compactValue } from "../helpers/compact";
+import { diffValues } from "../helpers/diff";
+import { hasAllInAny } from "../helpers/has-all";
 import { getByPath } from "../helpers/path";
+import {
+  replaceManyByScope,
+  replaceValueByScope,
+} from "../helpers/replace-value";
+import {
+  type SetAllUpdate,
+  setAllByPathOccurrences,
+  setAllByPathOccurrencesBatch,
+} from "../helpers/set-all";
+import { setByPath, setByPathStrict } from "../helpers/set-by-path";
+import { setPathOccurrencesIndividually } from "../helpers/set-each";
+import { type SetOneOptions, setOneByPath } from "../helpers/set-one";
+import {
+  setTopLevelValue,
+  setTopLevelValuesBatch,
+} from "../helpers/set-top-level";
+import {
+  type UnsetOptions,
+  unsetByPathStrict,
+  unsetByPathsStrict,
+} from "../helpers/unset-by-path";
 import { ObjectGroupQuery } from "../queries/object-group-query";
-import { ArrayQuery } from "./array-query";
+import type {
+  DiffOptions,
+  DiffResult,
+  FindOptions,
+  HasAllOptions,
+  ReplaceRule,
+  ReplaceValueOptions,
+  SetAtOptions,
+  SetOptions,
+} from "../types";
+import { _setJsonQueryRootFactory, ArrayQuery } from "./array-query";
 
 /**
  * Entry point for fluent JSON querying.
@@ -28,8 +62,8 @@ import { ArrayQuery } from "./array-query";
  * const results = query(resp)
  * .array('items')
  * .where('type')
- * .contains('pre') // partial match
  * .ignoreCase() // ignore case
+ * .contains('pre') // partial match
  * .all();
  * ```
  *
@@ -79,16 +113,35 @@ export class JsonQueryRoot<TRoot> {
    * @param path - Dot-path to the array.
    * @returns An {@link ArrayQuery} that can be filtered fluently.
    */
-  array<TItem = any>(path: string): ArrayQuery<TItem, "bound"> {
-    const v = getByPath(this.root as any, path);
+  array<TItem = any>(
+    path: string,
+  ): ArrayQuery<TItem, "bound"> & { exists: never; every: never } {
+    const v = getByPath(this.root as any, path, true);
     if (!Array.isArray(v)) {
       throw new Error(
         `Expected array at path "${path}", but found ${typeof v}.`,
       );
     }
     return ArrayQuery._bound<TItem>(v as TItem[], {
+      rootSnapshot: this.root,
       arrayPath: path,
-    });
+    }) as ArrayQuery<TItem, "bound"> & { exists: never; every: never };
+  }
+
+  /**
+   * Sorts an array at `arrayPath` by `byPath` and writes it back to the same path.
+   *
+   * This is a root-level convenience for:
+   * `query(root).array(arrayPath).sort(byPath, options).toRoot(arrayPath)`.
+   */
+  sortAt<TItem = any>(
+    arrayPath: string,
+    byPath: string,
+    options?: { direction?: "asc" | "desc"; nulls?: "last" | "first" },
+  ): JsonQueryRoot<TRoot> {
+    return this.array<TItem>(arrayPath)
+      .sort(byPath, options)
+      .toRoot(arrayPath) as JsonQueryRoot<TRoot>;
   }
 
   /**
@@ -99,11 +152,11 @@ export class JsonQueryRoot<TRoot> {
    * const items = query(resp)
    * .objectGroups('data.sections')
    * .include(['section1', 'section2'])
-   * .arrays('items');
+   * .flatArray('items');
    * ```
    */
   objectGroups(path: string): ObjectGroupQuery {
-    const v = getByPath(this.root as any, path);
+    const v = getByPath(this.root as any, path, true);
     if (!v || typeof v !== "object" || Array.isArray(v)) {
       throw new Error(`Expected object at path "${path}".`);
     }
@@ -111,11 +164,347 @@ export class JsonQueryRoot<TRoot> {
   }
 
   /**
-   * Returns the underlying root value.
-   * Useful when you want to step out of fluent mode.
+   * Returns the current root by reference (no deep copy).
+   * For a fully detached deep clone, use deepClone().
    */
-  raw(): TRoot {
+  unwrap(): TRoot {
     return this.root;
+  }
+
+  /**
+   * Returns a fully detached deep clone of the current root value.
+   */
+  deepClone(): TRoot {
+    return cloneForUserFn(this.root);
+  }
+
+  /**
+   * Removes the value at path immutably.
+   */
+  unset(path: string, options?: UnsetOptions): JsonQueryRoot<TRoot> {
+    return new JsonQueryRoot(unsetByPathStrict(this.root, path, options));
+  }
+
+  /**
+   * Removes multiple paths immutably.
+   */
+  unsetAll(
+    paths: ReadonlyArray<string>,
+    options?: UnsetOptions,
+  ): JsonQueryRoot<TRoot> {
+    return new JsonQueryRoot(unsetByPathsStrict(this.root, paths, options));
+  }
+
+  /**
+   * Filters an array at path using expression syntax and writes back immutably.
+   */
+  filterAt<TItem = any>(
+    arrayPath: string,
+    expression: string,
+    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+  ): JsonQueryRoot<TRoot> {
+    return this.array<TItem>(arrayPath)
+      .filter(expression, options)
+      .toRoot(arrayPath) as JsonQueryRoot<TRoot>;
+  }
+
+  /**
+   * Conditionally applies filterAt() when param is defined.
+   */
+  filterAtIfDefined<TItem = any>(
+    arrayPath: string,
+    expression: string,
+    param: any,
+    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+  ): JsonQueryRoot<TRoot> {
+    return this.array<TItem>(arrayPath)
+      .filterIfDefined(expression, param, options)
+      .toRoot(arrayPath) as JsonQueryRoot<TRoot>;
+  }
+
+  /**
+   * Conditionally applies filterAt() when all params are defined.
+   */
+  filterAtIfAllDefined<TItem = any>(
+    arrayPath: string,
+    expression: string,
+    params: Record<string, any>,
+    options?: { ignoreCase?: boolean; trim?: boolean; decimals?: number },
+  ): JsonQueryRoot<TRoot> {
+    return this.array<TItem>(arrayPath)
+      .filterIfAllDefined(expression, params, options)
+      .toRoot(arrayPath) as JsonQueryRoot<TRoot>;
+  }
+
+  /**
+   * Omits object keys from the object at path and writes back immutably.
+   */
+  omitAt(path: string, keys: string | string[]): JsonQueryRoot<TRoot> {
+    const target = getByPath(this.root as any, path, true);
+    if (!target || typeof target !== "object" || Array.isArray(target)) {
+      throw new Error(`Expected object at path "${path}".`);
+    }
+
+    const keyList = Array.isArray(keys) ? keys : [keys];
+    const updated = { ...(target as Record<string, unknown>) };
+    for (const key of keyList) {
+      delete updated[key];
+    }
+
+    return new JsonQueryRoot(setByPathStrict(this.root, path, updated));
+  }
+
+  /**
+   * Picks object keys from the object at path and writes back immutably.
+   */
+  pickAt(path: string, keys: string | string[]): JsonQueryRoot<TRoot> {
+    const target = getByPath(this.root as any, path, true);
+    if (!target || typeof target !== "object" || Array.isArray(target)) {
+      throw new Error(`Expected object at path "${path}".`);
+    }
+
+    const keyList = Array.isArray(keys) ? keys : [keys];
+    const source = target as Record<string, unknown>;
+    const updated: Record<string, unknown> = {};
+    for (const key of keyList) {
+      if (Object.hasOwn(source, key)) {
+        updated[key] = source[key];
+      }
+    }
+
+    return new JsonQueryRoot(setByPathStrict(this.root, path, updated));
+  }
+
+  /**
+   * Compacts values at path and writes back immutably.
+   */
+  compactAt(path: string, options?: CompactOptions): JsonQueryRoot<TRoot> {
+    const target = getByPath(this.root as any, path, true);
+    const compacted = compactValue(target, options);
+    return new JsonQueryRoot(setByPathStrict(this.root, path, compacted));
+  }
+
+  /**
+   * Applies grouped-object transforms at path and writes selected entries back.
+   */
+  objectGroupsAt(
+    path: string,
+    transform: (groups: ObjectGroupQuery) => ObjectGroupQuery,
+  ): JsonQueryRoot<TRoot> {
+    const transformed = transform(this.objectGroups(path));
+    const selectedGroups = Object.fromEntries(transformed.entries());
+    return new JsonQueryRoot(setByPathStrict(this.root, path, selectedGroups));
+  }
+
+  /**
+   * Renames a key in the object at path and writes back immutably.
+   */
+  renameAt(
+    path: string,
+    fromKey: string,
+    toKey: string,
+    options?: {
+      onMissing?: "ignore" | "throw";
+      onExisting?: "throw" | "overwrite";
+    },
+  ): JsonQueryRoot<TRoot> {
+    const target = getByPath(this.root as any, path, true);
+    if (!target || typeof target !== "object" || Array.isArray(target)) {
+      throw new Error(`Expected object at path "${path}".`);
+    }
+
+    const source = target as Record<string, unknown>;
+    if (!Object.hasOwn(source, fromKey)) {
+      if ((options?.onMissing ?? "ignore") === "throw") {
+        throw new Error(`Key "${fromKey}" not found at path "${path}".`);
+      }
+      return this;
+    }
+
+    if (
+      fromKey !== toKey &&
+      Object.hasOwn(source, toKey) &&
+      (options?.onExisting ?? "throw") === "throw"
+    ) {
+      throw new Error(`Key "${toKey}" already exists at path "${path}".`);
+    }
+
+    const updated: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(source)) {
+      if (key === fromKey) {
+        updated[toKey] = value;
+      } else if (
+        key !== toKey ||
+        (options?.onExisting ?? "throw") !== "overwrite"
+      ) {
+        updated[key] = value;
+      }
+    }
+
+    return new JsonQueryRoot(setByPathStrict(this.root, path, updated));
+  }
+
+  /**
+   * Applies a custom transform to the value at path and writes back immutably.
+   */
+  transformAt<TValue = unknown>(
+    path: string,
+    transform: (value: TValue) => TValue,
+  ): JsonQueryRoot<TRoot> {
+    const current = getByPath(this.root as any, path, true) as TValue;
+    const next = transform(cloneForUserFn(current));
+    return new JsonQueryRoot(setByPathStrict(this.root, path, next));
+  }
+
+  /**
+   * Replaces matched values inside the subtree at path and writes back immutably.
+   */
+  replaceValueAt(
+    path: string,
+    fromValue: unknown,
+    toValue: unknown,
+    options?: ReplaceValueOptions,
+  ): JsonQueryRoot<TRoot> {
+    const current = getByPath(this.root as any, path, true);
+    const next = replaceValueByScope(current, fromValue, toValue, options);
+    return new JsonQueryRoot(setByPathStrict(this.root, path, next));
+  }
+
+  /**
+   * Applies ordered replacement rules inside the subtree at path and writes back immutably.
+   */
+  replaceManyAt(
+    path: string,
+    rules: ReadonlyArray<ReplaceRule>,
+    options?: ReplaceValueOptions,
+  ): JsonQueryRoot<TRoot> {
+    const current = getByPath(this.root as any, path, true);
+    const next = replaceManyByScope(current, rules, options);
+    return new JsonQueryRoot(setByPathStrict(this.root, path, next));
+  }
+
+  /**
+   * Immutably sets an exact root path, optionally creating missing containers.
+   */
+  setAt(
+    path: string,
+    value: unknown,
+    options?: SetAtOptions,
+  ): JsonQueryRoot<TRoot> {
+    return new JsonQueryRoot(
+      setByPath(this.root, path, value, {
+        createMissing: options?.createMissing,
+        methodName: "setAt",
+      }),
+    );
+  }
+
+  /**
+   * Immutably sets one path/value rule on the root object.
+   */
+  set(
+    path: string,
+    value: unknown,
+    options?: SetOptions,
+  ): JsonQueryRoot<TRoot> {
+    const scope = options?.scope ?? "top-level";
+    return new JsonQueryRoot(
+      (scope === "deep"
+        ? setAllByPathOccurrences(this.root, path, value)
+        : setTopLevelValue(this.root, path, value)) as TRoot,
+    );
+  }
+
+  /**
+   * Immutably applies multiple path/value rules under the root object.
+   */
+  setAll(
+    updates: ReadonlyArray<SetAllUpdate>,
+    options?: SetOptions,
+  ): JsonQueryRoot<TRoot> {
+    const scope = options?.scope ?? "deep";
+    return new JsonQueryRoot(
+      (scope === "deep"
+        ? setAllByPathOccurrencesBatch(this.root, updates)
+        : setTopLevelValuesBatch(this.root, updates)) as TRoot,
+    );
+  }
+
+  /**
+   * Returns one updated root per matched path occurrence.
+   * Each result applies exactly one occurrence update independently.
+   */
+  setEach(path: string, value: unknown): ArrayQuery<TRoot, "bound"> {
+    return ArrayQuery._bound(
+      setPathOccurrencesIndividually(this.root, path, value),
+    );
+  }
+
+  /**
+   * Immutably replaces matched values under the root object.
+   */
+  replaceValue(
+    fromValue: unknown,
+    toValue: unknown,
+    options?: ReplaceValueOptions,
+  ): JsonQueryRoot<TRoot> {
+    return new JsonQueryRoot(
+      replaceValueByScope(this.root, fromValue, toValue, options) as TRoot,
+    );
+  }
+
+  /**
+   * Immutably applies ordered replacement rules under the root object.
+   */
+  replaceMany(
+    rules: ReadonlyArray<ReplaceRule>,
+    options?: ReplaceValueOptions,
+  ): JsonQueryRoot<TRoot> {
+    return new JsonQueryRoot(
+      replaceManyByScope(this.root, rules, options) as TRoot,
+    );
+  }
+
+  /**
+   * Compares the root object with an expected value and returns diff summary.
+   */
+  diff(expected: unknown, options?: DiffOptions): DiffResult {
+    return diffValues(expected, this.root, options);
+  }
+
+  /**
+   * Returns true when the root satisfies all criteria under the chosen scope.
+   */
+  hasAll(criteria: Record<string, unknown>, options?: HasAllOptions): boolean {
+    return hasAllInAny([this.root], criteria, options);
+  }
+
+  /**
+   * Returns true when the root satisfies a single key/value pair under the chosen scope.
+   */
+  has(key: string, value: unknown, options?: HasAllOptions): boolean {
+    return this.hasAll({ [key]: value }, options);
+  }
+
+  /**
+   * Immutably sets exactly one match for a path under the root object.
+   */
+  setOne(
+    path: string,
+    value: unknown,
+    options?: SetOneOptions,
+  ): JsonQueryRoot<TRoot> {
+    return new JsonQueryRoot(setOneByPath(this.root, path, value, options));
+  }
+
+  /**
+   * Searches for a property/path under the root object using scope controls.
+   */
+  find<TValue = any>(pathOrProperty: string, options?: FindOptions) {
+    return ArrayQuery._bound([this.root as any]).find<TValue>(
+      pathOrProperty,
+      options,
+    );
   }
 
   /**
@@ -149,7 +538,7 @@ export class JsonQueryRoot<TRoot> {
     if (typeof pathOrPaths === "object" && !Array.isArray(pathOrPaths)) {
       // Object format: { outputKey: 'path' }
       for (const [key, path] of Object.entries(pathOrPaths)) {
-        result[key] = getByPath(this.root as any, path);
+        result[key] = getByPath(this.root as any, path, true);
       }
     } else {
       // String or array format
@@ -157,7 +546,7 @@ export class JsonQueryRoot<TRoot> {
         ? pathOrPaths
         : [pathOrPaths, ...rest];
       for (const path of paths) {
-        result[path] = getByPath(this.root as any, path);
+        result[path] = getByPath(this.root as any, path, true);
       }
     }
 
@@ -174,7 +563,10 @@ export class JsonQueryRoot<TRoot> {
    *
    * @note The returned query does not support `.path()` since root arrays don't have a named path.
    */
-  arrayRoot<TItem = any>(): Omit<ArrayQuery<TItem, "bound">, "path"> {
+  arrayRoot<TItem = any>(): Omit<ArrayQuery<TItem, "bound">, "path"> & {
+    exists: never;
+    every: never;
+  } {
     return this.array<TItem>("");
   }
 
@@ -193,7 +585,7 @@ export class JsonQueryRoot<TRoot> {
           "Use recipe.run(items) or query(data).array(path).run(recipe) instead.",
       );
     }
-    const items = getByPath(this.root as any, path) as TItem[];
+    const items = getByPath(this.root as any, path, true) as TItem[];
     if (!Array.isArray(items)) {
       throw new Error(`Expected array at path "${path}", got ${typeof items}.`);
     }
@@ -204,4 +596,30 @@ export class JsonQueryRoot<TRoot> {
     const purePipeline = ArrayQuery._fromSteps<TItem>([...steps]);
     return purePipeline.run(items);
   }
+}
+
+_setJsonQueryRootFactory((root) => new JsonQueryRoot(root));
+
+function cloneForUserFn<T>(value: T): T {
+  if (value === null || value === undefined) {
+    return value;
+  }
+
+  if (typeof globalThis.structuredClone === "function") {
+    return globalThis.structuredClone(value);
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneForUserFn(item)) as T;
+  }
+
+  if (typeof value === "object") {
+    const clone: Record<string, any> = {};
+    for (const [key, val] of Object.entries(value as Record<string, any>)) {
+      clone[key] = cloneForUserFn(val);
+    }
+    return clone as T;
+  }
+
+  return value;
 }

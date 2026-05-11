@@ -12,3 +12,5 @@ pnpm-debug.log*
 .vscode/
 .DS_Store
 Thumbs.db
+copilot-instructions.md
+DEVELOPMENT_WORKFLOW.md
