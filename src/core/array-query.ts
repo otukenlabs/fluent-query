@@ -859,7 +859,7 @@ export class ArrayQuery<
         $where: function (this: any) {
           let fieldValue: any;
           try {
-            fieldValue = path === "" ? this : this[path];
+            fieldValue = path === "" ? this : getByPath(this, path);
           } catch {
             return false;
           }
@@ -918,7 +918,7 @@ export class ArrayQuery<
         $where: function (this: any) {
           let fieldValue: any;
           try {
-            fieldValue = path === "" ? this : this[path];
+            fieldValue = path === "" ? this : getByPath(this, path);
           } catch {
             return true; // Missing field is not in the list
           }

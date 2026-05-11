@@ -349,7 +349,7 @@ export class ObjectGroupQuery {
         $where: function (this: any) {
           let fieldValue: any;
           try {
-            fieldValue = path === "" ? this : this[path];
+            fieldValue = path === "" ? this : getByPath(this, path);
           } catch {
             return false;
           }
@@ -404,7 +404,7 @@ export class ObjectGroupQuery {
         $where: function (this: any) {
           let fieldValue: any;
           try {
-            fieldValue = path === "" ? this : this[path];
+            fieldValue = path === "" ? this : getByPath(this, path);
           } catch {
             return true;
           }
@@ -1078,7 +1078,7 @@ export class ObjectGroupWhereBuilder {
             fieldValue = this;
           } else {
             try {
-              fieldValue = this[path];
+              fieldValue = getByPath(this, path);
             } catch {
               return negate; // If error accessing field, negate determines falsy/truthy
             }
