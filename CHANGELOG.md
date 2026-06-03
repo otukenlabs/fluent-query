@@ -1,5 +1,11 @@
 # Changelog
 
+## [2.0.2] - 2026-06-03
+
+### Added
+
+- Added `JsonQueryRoot.objectGroupsRoot()` as a root-level convenience alias for `objectGroups("")`, making root object-group selection symmetric with `arrayRoot()`.
+
 ## [2.0.1] - 2026-05-11
 
 ### Fixed

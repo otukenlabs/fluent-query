@@ -164,6 +164,15 @@ export class JsonQueryRoot<TRoot> {
   }
 
   /**
+   * Selects the root as an object-group collection.
+   *
+   * This is a convenience alias for `objectGroups("")`.
+   */
+  objectGroupsRoot(): ObjectGroupQuery {
+    return this.objectGroups("");
+  }
+
+  /**
    * Returns the current root by reference (no deep copy).
    * For a fully detached deep clone, use deepClone().
    */

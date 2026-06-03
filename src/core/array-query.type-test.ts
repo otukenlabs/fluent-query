@@ -41,6 +41,16 @@ query(groupedRoot)
   .greaterThan(0)
   .exists();
 
+query({
+  currentAccounts: { products: [{ id: "1" }] },
+  savingsAccounts: { products: [{ id: "2" }] },
+})
+  .objectGroupsRoot()
+  .flatArray<{ id: string }>("products")
+  .where("id")
+  .equals("2")
+  .first();
+
 query(groupedRoot)
   .objectGroups("sections")
   .include("a")
