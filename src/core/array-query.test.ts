@@ -3312,6 +3312,34 @@ describe("ArrayQuery", () => {
       expect(transformed.payload.values).toEqual([2, 4, 6]);
     });
 
+    it('should support objectGroupsRoot() as objectGroups("") alias', () => {
+      const root = {
+        currentAccounts: {
+          products: [{ id: "1" }, { id: "2" }],
+        },
+        savingsAccounts: {
+          products: [{ id: "3" }, { id: "4" }],
+        },
+      };
+
+      const byRootAlias = query(root)
+        .objectGroupsRoot()
+        .flatArray<{ id: string }>("products")
+        .where("id")
+        .equals("4")
+        .first();
+
+      const byExplicitPath = query(root)
+        .objectGroups("")
+        .flatArray<{ id: string }>("products")
+        .where("id")
+        .equals("4")
+        .first();
+
+      expect(byRootAlias).toEqual({ id: "4" });
+      expect(byRootAlias).toEqual(byExplicitPath);
+    });
+
     it("should support root setAll() immutably", () => {
       const root = {
         sections: {
