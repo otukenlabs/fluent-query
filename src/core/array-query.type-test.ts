@@ -81,6 +81,9 @@ boundItems.every();
 
 query(boundRoot).array("items").where("id").equals(1).exists();
 query(boundRoot).array("items").where("id").gt(0).every();
+query(boundRoot)
+  .array("items")
+  .everyWhere({ id: 1 }, { id: [1, 2] }, { mode: "any" });
 
 const rootArray = query([{ id: 1 }]).arrayRoot<{ id: number }>();
 
@@ -95,3 +98,10 @@ query([{ id: 1 }])
   .where("id")
   .equals(1)
   .exists();
+
+const everyWherePipe = query(boundRoot)
+  .array("items")
+  .toRecipe()
+  .everyWhere({ id: 1 }, { id: [1, 2] }, { mode: "any" });
+
+query(boundRoot).run(everyWherePipe);
