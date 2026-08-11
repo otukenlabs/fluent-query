@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.3] - 2026-08-10
+
+### Added
+
+- Added `ArrayQuery.everyWhere(selector, required, options?)` boolean terminal for conditional universal validation on selected rows.
+  - `selector` targets which rows to validate (exact-match criteria).
+  - `required` defines what each targeted row must satisfy.
+  - `options.mode` supports `"all"` (default) or `"any"`.
+  - `required` values can be a single primitive or an array of primitives (for example `{ "meta.id": [10, 11] }`) to express allowed-value sets.
+
+### Notes
+
+- JavaScript object literals cannot contain duplicate keys. For multi-value checks on the same path, use an array value in `required`.
+
 ## [2.0.2] - 2026-06-03
 
 ### Added

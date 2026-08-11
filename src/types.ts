@@ -101,6 +101,12 @@ export type HasAllOptions = {
   scope?: "top-level" | "deep";
 };
 
+export type EveryWhereOptions = {
+  mode?: "all" | "any";
+};
+
+export type EveryWhereRequiredValue = Primitive | readonly Primitive[];
+
 export type ExistsOptions = {
   minCount?: number;
   maxCount?: number;
