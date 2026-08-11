@@ -41,6 +41,8 @@ import type {
   ArrayQueryMetadata,
   DiffOptions,
   DiffResult,
+  EveryWhereOptions,
+  EveryWhereRequiredValue,
   ExistsOptions,
   FindOptions,
   HasAllOptions,
@@ -1184,6 +1186,58 @@ export class ArrayQuery<
   }
 
   /**
+   * Returns true when every selected item matching `selector` also satisfies
+   * `required` criteria.
+   *
+   * - `mode: "all"` (default): each targeted item must satisfy all `required` pairs.
+   * - `mode: "any"`: each targeted item must satisfy at least one `required` pair.
+   *
+   * Required values may be single primitives or primitive arrays.
+   * For primitive arrays, a match succeeds when the field equals any entry in the array.
+   */
+  everyWhere(
+    selector: Record<string, Primitive>,
+    required: Record<string, EveryWhereRequiredValue>,
+    options?: EveryWhereOptions,
+  ): TMode extends "bound" ? boolean : UnboundTerminalReplay<boolean, TItem> {
+    if (this.items === undefined) {
+      return this._appendStep("everyWhere", selector, required, options) as any;
+    }
+
+    const selectorEntries = Object.entries(selector);
+    if (selectorEntries.length === 0) {
+      throw new Error("everyWhere() requires at least one selector criterion.");
+    }
+
+    const requiredEntries = Object.entries(required);
+    if (requiredEntries.length === 0) {
+      throw new Error("everyWhere() requires at least one required criterion.");
+    }
+
+    const mode = options?.mode ?? "all";
+    if (mode !== "all" && mode !== "any") {
+      throw new Error(
+        'everyWhere() options.mode must be either "all" or "any".',
+      );
+    }
+
+    const selected = this._executeFilter();
+    const targets = selected.filter((item) =>
+      ArrayQuery._matchesPrimitiveCriteria(item, selectorEntries),
+    );
+
+    if (targets.length === 0) {
+      throw new Error(
+        "everyWhere() requires at least one selected item after applying selector criteria. Add exists() before everyWhere(), or widen selector criteria.",
+      );
+    }
+
+    return targets.every((item) =>
+      ArrayQuery._matchesRequiredCriteria(item, requiredEntries, mode),
+    ) as any;
+  }
+
+  /**
    * Returns true if at least one item matches.
    */
   exists(
@@ -1259,6 +1313,52 @@ export class ArrayQuery<
     }
 
     return normalized;
+  }
+
+  private static _matchesPrimitiveCriteria(
+    item: unknown,
+    criteriaEntries: ReadonlyArray<[string, Primitive]>,
+  ): boolean {
+    return criteriaEntries.every(([path, expected]) => {
+      try {
+        return getByPath(item, path, true) === expected;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  private static _matchesRequiredCriteria(
+    item: unknown,
+    requiredEntries: ReadonlyArray<[string, EveryWhereRequiredValue]>,
+    mode: "all" | "any",
+  ): boolean {
+    const matchesOne = ([path, expected]: [
+      string,
+      EveryWhereRequiredValue,
+    ]) => {
+      let actual: unknown;
+      try {
+        actual = getByPath(item, path, true);
+      } catch {
+        return false;
+      }
+
+      if (Array.isArray(expected)) {
+        if (expected.length === 0) {
+          return false;
+        }
+        return expected.some((candidate) => actual === candidate);
+      }
+
+      return actual === expected;
+    };
+
+    if (mode === "any") {
+      return requiredEntries.some(matchesOne);
+    }
+
+    return requiredEntries.every(matchesOne);
   }
 
   /**

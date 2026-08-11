@@ -968,6 +968,16 @@ describe("arrayPipeline (unbound mode)", () => {
         "whereNone() requires at least one criterion.",
       );
     });
+
+    it("supports everyWhere() terminal replay with mode=any", () => {
+      const pipe = arrayPipeline<Item>().everyWhere(
+        { type: "Premium" },
+        { price: [150, 300, 500] },
+        { mode: "any" },
+      );
+
+      expect(pipe.run(datasetA)).toBe(true);
+    });
   });
 
   describe("containsIfDefined / startsWithIfDefined / endsWithIfDefined", () => {

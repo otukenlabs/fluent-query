@@ -2712,6 +2712,83 @@ describe("ArrayQuery", () => {
     });
   });
 
+  describe(".everyWhere()", () => {
+    const source = {
+      items: [
+        { sku: "A1", meta: { id: 10, status: "active" }, country: "US" },
+        { sku: "A1", meta: { id: 11, status: "active" }, country: "US" },
+        { sku: "A2", meta: { id: 20, status: "archived" }, country: "CA" },
+      ],
+    };
+
+    it("should return true when all targeted items satisfy all required criteria", () => {
+      const result = query(source)
+        .array("items")
+        .everyWhere({ sku: "A1" }, { "meta.status": "active", country: "US" });
+
+      expect(result).toBe(true);
+    });
+
+    it("should return false when any targeted item violates required criteria in all mode", () => {
+      const invalid = {
+        items: [
+          { sku: "A1", meta: { id: 10, status: "active" }, country: "US" },
+          { sku: "A1", meta: { id: 11, status: "inactive" }, country: "US" },
+        ],
+      };
+
+      const result = query(invalid)
+        .array("items")
+        .everyWhere({ sku: "A1" }, { "meta.status": "active" });
+
+      expect(result).toBe(false);
+    });
+
+    it("should support mode=any with multi-value required criteria", () => {
+      const result = query(source)
+        .array("items")
+        .everyWhere({ sku: "A1" }, { "meta.id": [10, 11] }, { mode: "any" });
+
+      expect(result).toBe(true);
+    });
+
+    it("should return false in mode=any when targeted items satisfy none of required criteria", () => {
+      const result = query(source)
+        .array("items")
+        .everyWhere(
+          { sku: "A1" },
+          { "meta.id": [100, 101], country: "CA" },
+          { mode: "any" },
+        );
+
+      expect(result).toBe(false);
+    });
+
+    it("should throw when selector criteria is empty", () => {
+      expect(() =>
+        query(source)
+          .array("items")
+          .everyWhere({}, { "meta.status": "active" }),
+      ).toThrow("everyWhere() requires at least one selector criterion.");
+    });
+
+    it("should throw when required criteria is empty", () => {
+      expect(() =>
+        query(source).array("items").everyWhere({ sku: "A1" }, {}),
+      ).toThrow("everyWhere() requires at least one required criterion.");
+    });
+
+    it("should throw when selector matches no items", () => {
+      expect(() =>
+        query(source)
+          .array("items")
+          .everyWhere({ sku: "A9" }, { "meta.status": "active" }),
+      ).toThrow(
+        "everyWhere() requires at least one selected item after applying selector criteria. Add exists() before everyWhere(), or widen selector criteria.",
+      );
+    });
+  });
+
   describe(".scan()", () => {
     it("should return running accumulation with init", () => {
       const result = query(testData)
@@ -3310,6 +3387,34 @@ describe("ArrayQuery", () => {
         )
         .unwrap() as typeof root;
       expect(transformed.payload.values).toEqual([2, 4, 6]);
+    });
+
+    it('should support objectGroupsRoot() as objectGroups("") alias', () => {
+      const root = {
+        currentAccounts: {
+          products: [{ id: "1" }, { id: "2" }],
+        },
+        savingsAccounts: {
+          products: [{ id: "3" }, { id: "4" }],
+        },
+      };
+
+      const byRootAlias = query(root)
+        .objectGroupsRoot()
+        .flatArray<{ id: string }>("products")
+        .where("id")
+        .equals("4")
+        .first();
+
+      const byExplicitPath = query(root)
+        .objectGroups("")
+        .flatArray<{ id: string }>("products")
+        .where("id")
+        .equals("4")
+        .first();
+
+      expect(byRootAlias).toEqual({ id: "4" });
+      expect(byRootAlias).toEqual(byExplicitPath);
     });
 
     it("should support root setAll() immutably", () => {
