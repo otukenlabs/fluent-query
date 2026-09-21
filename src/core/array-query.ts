@@ -59,6 +59,7 @@ import { WhereBuilder } from "./where-builder";
 
 let createJsonQueryRoot: ((root: any) => JsonQueryRoot<any>) | undefined;
 
+/** @internal */
 export function _setJsonQueryRootFactory(
   factory: (root: any) => JsonQueryRoot<any>,
 ): void {

@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.1.0] - 2026-09-21
+
+### Added
+
+- Added `WhereBuilder.typeOf(type, options?)` runtime type filtering terminal, including strict null/undefined handling and type-specific option narrowing.
+- Added `ObjectGroupWhereBuilder.typeOf(type, options?)` for parity with array-query where chains over grouped values.
+- Added `WhereBuilder.lengthOf(type, options?)` length-based filtering terminal for `string`, `array`, and `object` values.
+- Added `ObjectGroupWhereBuilder.lengthOf(type, options?)` for grouped-value length filtering parity.
+- Added `ObjectGroupQuery.flatArry()` as a no-argument alias for `flatArray("")` when grouped values are arrays.
+
 ## [2.0.3] - 2026-08-10
 
 ### Added
