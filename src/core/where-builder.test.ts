@@ -608,4 +608,103 @@ describe("WhereBuilder", () => {
       expect(result).toHaveLength(1);
     });
   });
+
+  describe(".typeOf()", () => {
+    it("should match non-empty strings with length rules", () => {
+      const result = query({
+        users: [
+          { name: " Alice " },
+          { name: "Bob" },
+          { name: "   " },
+          { name: 42 },
+        ],
+      })
+        .array("users")
+        .where("name")
+        .typeOf("string", {
+          trim: true,
+          nonEmpty: true,
+          minLength: 3,
+        })
+        .all();
+
+      expect(result.map((user) => user.name)).toEqual([" Alice ", "Bob"]);
+    });
+
+    it("should reject undefined and accept null only with allowNull", () => {
+      const result = query({
+        users: [{ name: null }, { name: "Alice" }, { name: undefined }],
+      })
+        .array("users")
+        .where("name")
+        .typeOf("string", { allowNull: true })
+        .all();
+
+      expect(result.map((user) => user.name)).toEqual([null, "Alice"]);
+    });
+
+    it("should enforce finite positive numbers", () => {
+      const result = query({
+        users: [
+          { score: 10 },
+          { score: 0 },
+          { score: -2 },
+          { score: Number.NaN },
+          { score: Number.POSITIVE_INFINITY },
+        ],
+      })
+        .array("users")
+        .where("score")
+        .typeOf("number", {
+          finite: true,
+          positive: true,
+        })
+        .all();
+
+      expect(result.map((user) => user.score)).toEqual([10]);
+    });
+  });
+
+  describe(".lengthOf()", () => {
+    it("should validate trimmed string length by default", () => {
+      const result = query({
+        users: [{ code: "  AB  " }, { code: "A" }, { code: "    " }],
+      })
+        .array("users")
+        .where("code")
+        .lengthOf("string", { min: 2 })
+        .all();
+
+      expect(result.map((user) => user.code)).toEqual(["  AB  "]);
+    });
+
+    it("should validate array length range", () => {
+      const result = query({
+        users: [
+          { tags: ["a"] },
+          { tags: ["a", "b"] },
+          { tags: ["a", "b", "c"] },
+          { tags: [] },
+        ],
+      })
+        .array("users")
+        .where("tags")
+        .lengthOf("array", { min: 1, max: 2 })
+        .all();
+
+      expect(result.map((user) => user.tags.length)).toEqual([1, 2]);
+    });
+
+    it("should validate object key count", () => {
+      const result = query({
+        users: [{ meta: {} }, { meta: { a: 1 } }, { meta: { a: 1, b: 2 } }],
+      })
+        .array("users")
+        .where("meta")
+        .lengthOf("object", { exact: 1 })
+        .all();
+
+      expect(result.map((user) => Object.keys(user.meta).length)).toEqual([1]);
+    });
+  });
 });

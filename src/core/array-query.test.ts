@@ -3389,6 +3389,48 @@ describe("ArrayQuery", () => {
       expect(transformed.payload.values).toEqual([2, 4, 6]);
     });
 
+    it("should support objectGroupsAt() with where().typeOf() validation", () => {
+      const root = {
+        sections: {
+          a: { status: "active" },
+          b: { status: "" },
+          c: { status: undefined },
+          d: { status: 42 },
+        },
+      };
+
+      const filtered = query(root)
+        .objectGroupsAt("sections", (groups) =>
+          groups.where("status").typeOf("string", { nonEmpty: true }),
+        )
+        .unwrap() as typeof root;
+
+      expect(filtered.sections).toEqual({
+        a: { status: "active" },
+      });
+    });
+
+    it("should support objectGroupsAt() with where().lengthOf() validation", () => {
+      const root = {
+        sections: {
+          a: { code: " AB " },
+          b: { code: "A" },
+          c: { code: "   " },
+          d: { code: 12 },
+        },
+      };
+
+      const filtered = query(root)
+        .objectGroupsAt("sections", (groups) =>
+          groups.where("code").lengthOf("string", { min: 2 }),
+        )
+        .unwrap() as typeof root;
+
+      expect(filtered.sections).toEqual({
+        a: { code: " AB " },
+      });
+    });
+
     it('should support objectGroupsRoot() as objectGroups("") alias', () => {
       const root = {
         currentAccounts: {
@@ -3839,6 +3881,23 @@ describe("ArrayQuery", () => {
       const result = query(root)
         .objectGroups("sections")
         .arrays<{ id: number }>("items")
+        .pluck("id")
+        .all();
+
+      expect(result).toEqual([1, 2, 3]);
+    });
+
+    it('should support objectGroups().flatArry() as an alias of flatArray("")', () => {
+      const root = {
+        sections: {
+          a: [{ id: 1 }, { id: 2 }],
+          b: [{ id: 3 }],
+        },
+      };
+
+      const result = query(root)
+        .objectGroups("sections")
+        .flatArry<{ id: number }>()
         .pluck("id")
         .all();
 

@@ -13,6 +13,65 @@ import type {
 } from "../types";
 import type { ArrayQuery } from "./array-query";
 
+export type TypeOfName =
+  | "string"
+  | "number"
+  | "boolean"
+  | "object"
+  | "array"
+  | "null";
+
+export type TypeOfStringOptions = {
+  allowNull?: boolean;
+  trim?: boolean;
+  nonEmpty?: boolean;
+  minLength?: number;
+  maxLength?: number;
+};
+
+export type TypeOfNumberOptions = {
+  allowNull?: boolean;
+  finite?: boolean;
+  positive?: boolean;
+  negative?: boolean;
+};
+
+export type TypeOfBooleanOptions = {
+  allowNull?: boolean;
+};
+
+export type TypeOfObjectOptions = {
+  allowNull?: boolean;
+  allowEmptyObject?: boolean;
+};
+
+export type TypeOfArrayOptions = {
+  allowNull?: boolean;
+  minItems?: number;
+  maxItems?: number;
+};
+
+export type TypeOfNullOptions = {
+  allowNull?: boolean;
+};
+
+export type LengthOfName = "string" | "array" | "object";
+
+export type LengthOfBaseOptions = {
+  allowNull?: boolean;
+  min?: number;
+  max?: number;
+  exact?: number;
+};
+
+export type LengthOfStringOptions = LengthOfBaseOptions & {
+  trim?: boolean;
+};
+
+export type LengthOfArrayOptions = LengthOfBaseOptions;
+
+export type LengthOfObjectOptions = LengthOfBaseOptions;
+
 /**
  * Builder for a single `where(path)` clause.
  *
@@ -261,6 +320,281 @@ export class WhereBuilder<TItem, TMode extends "bound" | "unbound" = "bound"> {
     },
   ): ArrayQuery<TItem, TMode> {
     return this.notEquals(value, options);
+  }
+
+  /**
+   * Validates the type of the current field and optionally applies type-specific rules.
+   *
+   * Default behavior:
+   * - `undefined` never matches
+   * - `null` only matches when `allowNull` is enabled or the target type is `"null"`
+   * - `allowNull` defaults to `false`
+   * - `trim` defaults to `true` for strings
+   * - `finite` defaults to `false` for numbers
+   * - `allowEmptyObject` defaults to `false` for objects
+   *
+   * `undefined` is never treated as a valid match. `null` is only accepted when
+   * `allowNull` is enabled or the target type is `"null"`.
+   */
+  typeOf(
+    type: "string",
+    options?: TypeOfStringOptions,
+  ): ArrayQuery<TItem, TMode>;
+  typeOf(
+    type: "number",
+    options?: TypeOfNumberOptions,
+  ): ArrayQuery<TItem, TMode>;
+  typeOf(
+    type: "boolean",
+    options?: TypeOfBooleanOptions,
+  ): ArrayQuery<TItem, TMode>;
+  typeOf(
+    type: "object",
+    options?: TypeOfObjectOptions,
+  ): ArrayQuery<TItem, TMode>;
+  typeOf(type: "array", options?: TypeOfArrayOptions): ArrayQuery<TItem, TMode>;
+  typeOf(type: "null", options?: TypeOfNullOptions): ArrayQuery<TItem, TMode>;
+  typeOf(
+    type: TypeOfName,
+    options?:
+      | TypeOfStringOptions
+      | TypeOfNumberOptions
+      | TypeOfBooleanOptions
+      | TypeOfObjectOptions
+      | TypeOfArrayOptions
+      | TypeOfNullOptions,
+  ): ArrayQuery<TItem, TMode> {
+    const path = this.path;
+    const negate = this.negate;
+    const allowNull = options?.allowNull === true;
+    const stringOptions =
+      type === "string"
+        ? (options as TypeOfStringOptions | undefined)
+        : undefined;
+    const numberOptions =
+      type === "number"
+        ? (options as TypeOfNumberOptions | undefined)
+        : undefined;
+    const arrayOptions =
+      type === "array"
+        ? (options as TypeOfArrayOptions | undefined)
+        : undefined;
+    const objectOptions =
+      type === "object"
+        ? (options as TypeOfObjectOptions | undefined)
+        : undefined;
+
+    return this.parent._pushClause({
+      $where: function (this: any) {
+        const value =
+          path === ""
+            ? this
+            : (() => {
+                try {
+                  return getByPath(this, path);
+                } catch {
+                  return undefined;
+                }
+              })();
+
+        if (value === undefined) {
+          return negate;
+        }
+
+        if (value === null) {
+          const matches = type === "null" || allowNull;
+          return negate ? !matches : matches;
+        }
+
+        let matches = false;
+        const actualType = Array.isArray(value)
+          ? "array"
+          : value === null
+            ? "null"
+            : typeof value;
+
+        if (type === "string") {
+          matches = actualType === "string";
+          if (matches) {
+            const text = stringOptions?.trim === false ? value : value.trim();
+            if (stringOptions?.nonEmpty) {
+              matches = text.length > 0;
+            }
+            if (typeof stringOptions?.minLength === "number") {
+              matches = matches && text.length >= stringOptions.minLength;
+            }
+            if (typeof stringOptions?.maxLength === "number") {
+              matches = matches && text.length <= stringOptions.maxLength;
+            }
+          }
+        } else if (type === "number") {
+          matches = actualType === "number";
+          if (matches) {
+            if (numberOptions?.finite) {
+              matches = Number.isFinite(value);
+            }
+            if (matches && numberOptions?.positive) {
+              matches = value > 0;
+            }
+            if (matches && numberOptions?.negative) {
+              matches = value < 0;
+            }
+          }
+        } else if (type === "boolean") {
+          matches = actualType === "boolean";
+        } else if (type === "array") {
+          matches = actualType === "array";
+          if (matches) {
+            if (typeof arrayOptions?.minItems === "number") {
+              matches = value.length >= arrayOptions.minItems;
+            }
+            if (matches && typeof arrayOptions?.maxItems === "number") {
+              matches = value.length <= arrayOptions.maxItems;
+            }
+          }
+        } else if (type === "object") {
+          matches =
+            actualType === "object" && !Array.isArray(value) && value !== null;
+          if (matches && objectOptions?.allowEmptyObject === false) {
+            matches = Object.keys(value).length > 0;
+          }
+        } else if (type === "null") {
+          matches = actualType === "null";
+        }
+
+        return negate ? !matches : matches;
+      },
+    });
+  }
+
+  /**
+   * Validates the length of string, array, or object values.
+   *
+   * - `string` uses `.length` (trimmed by default, disable with `trim: false`)
+   * - `array` uses item count
+   * - `object` uses `Object.keys(value).length`
+   * - `undefined` never matches
+   * - `null` only matches when `allowNull` is enabled
+   */
+  lengthOf(
+    type: "string",
+    options?: LengthOfStringOptions,
+  ): ArrayQuery<TItem, TMode>;
+  lengthOf(
+    type: "array",
+    options?: LengthOfArrayOptions,
+  ): ArrayQuery<TItem, TMode>;
+  lengthOf(
+    type: "object",
+    options?: LengthOfObjectOptions,
+  ): ArrayQuery<TItem, TMode>;
+  lengthOf(
+    type: LengthOfName,
+    options?:
+      | LengthOfStringOptions
+      | LengthOfArrayOptions
+      | LengthOfObjectOptions,
+  ): ArrayQuery<TItem, TMode> {
+    const path = this.path;
+    const negate = this.negate;
+    const allowNull = options?.allowNull === true;
+    const stringOptions =
+      type === "string"
+        ? (options as LengthOfStringOptions | undefined)
+        : undefined;
+
+    const validateBound = (
+      value: number | undefined,
+      label: "min" | "max" | "exact",
+    ) => {
+      if (value === undefined) {
+        return;
+      }
+      if (!Number.isInteger(value) || value < 0) {
+        throw new Error(
+          `lengthOf("${this.path}") options.${label} must be a non-negative integer.`,
+        );
+      }
+    };
+
+    validateBound(options?.min, "min");
+    validateBound(options?.max, "max");
+    validateBound(options?.exact, "exact");
+
+    if (
+      options?.min !== undefined &&
+      options?.max !== undefined &&
+      options.min > options.max
+    ) {
+      throw new Error(
+        `lengthOf("${this.path}") options.min cannot be greater than options.max.`,
+      );
+    }
+
+    if (
+      options?.exact !== undefined &&
+      (options?.min !== undefined || options?.max !== undefined)
+    ) {
+      throw new Error(
+        `lengthOf("${this.path}") options.exact cannot be combined with options.min or options.max.`,
+      );
+    }
+
+    const matchesLength = (size: number): boolean => {
+      if (typeof options?.exact === "number") {
+        return size === options.exact;
+      }
+      if (typeof options?.min === "number" && size < options.min) {
+        return false;
+      }
+      if (typeof options?.max === "number" && size > options.max) {
+        return false;
+      }
+      return true;
+    };
+
+    return this.parent._pushClause({
+      $where: function (this: any) {
+        const value =
+          path === ""
+            ? this
+            : (() => {
+                try {
+                  return getByPath(this, path);
+                } catch {
+                  return undefined;
+                }
+              })();
+
+        if (value === undefined) {
+          return negate;
+        }
+
+        if (value === null) {
+          const matches = allowNull;
+          return negate ? !matches : matches;
+        }
+
+        let matches = false;
+
+        if (type === "string") {
+          if (typeof value === "string") {
+            const text = stringOptions?.trim === false ? value : value.trim();
+            matches = matchesLength(text.length);
+          }
+        } else if (type === "array") {
+          if (Array.isArray(value)) {
+            matches = matchesLength(value.length);
+          }
+        } else if (type === "object") {
+          if (typeof value === "object" && !Array.isArray(value)) {
+            matches = matchesLength(Object.keys(value).length);
+          }
+        }
+
+        return negate ? !matches : matches;
+      },
+    });
   }
 
   /**

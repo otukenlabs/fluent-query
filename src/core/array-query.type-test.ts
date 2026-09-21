@@ -34,6 +34,25 @@ groupedItemsAlias.exists();
 // @ts-expect-error every() is intentionally unavailable directly after grouped arrays().
 groupedItemsAlias.every();
 
+const groupedRootArrays = {
+  sections: {
+    a: [{ id: 1 }],
+  },
+};
+
+const groupedItemsEmptyPathAlias = query(groupedRootArrays)
+  .objectGroups("sections")
+  .flatArry<{ id: number }>();
+
+// @ts-expect-error toRoot() is intentionally unavailable on grouped array queries.
+groupedItemsEmptyPathAlias.toRoot();
+
+// @ts-expect-error exists() is intentionally unavailable directly after grouped flatArry().
+groupedItemsEmptyPathAlias.exists();
+
+// @ts-expect-error every() is intentionally unavailable directly after grouped flatArry().
+groupedItemsEmptyPathAlias.every();
+
 query(groupedRoot)
   .objectGroups("sections")
   .flatArray("items")
